@@ -4,7 +4,7 @@
 
 `AGENTS.md` остается коротким оперативным контрактом для агентов. Подробные правила, этапы и чеклисты находятся здесь:
 
-- [development-cycle.md](development-cycle.md) - полный цикл backend-разработки в проекте.
+- [development-cycle.md](development-cycle.md) - полный цикл разработки в проекте.
 - [checklists.md](checklists.md) - инструментонезависимые роли и чеклисты.
 
 Документы текущей программы находятся в [../program](../program):
