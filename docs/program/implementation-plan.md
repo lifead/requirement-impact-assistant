@@ -1,4 +1,4 @@
-# План реализации MVP программы анализа влияния изменений требований
+# План реализации MVP программы анализа влияния проектных запросов
 
 ## Назначение документа
 
@@ -21,17 +21,18 @@
 
 ## Границы реализации MVP
 
-В рамках первого MVP реализуется локальное web-приложение на ASP.NET Core Razor Pages с SQLite-хранилищем.
+В рамках MVP-0 реализуется локальное web-приложение на ASP.NET Core Razor Pages с SQLite-хранилищем. Интеллектуальный анализ выполняется как прямой LLM-анализ с вручную добавленным проектным контекстом через `DirectLlmAnalysisEngine`.
 
 Входит:
 
-- создание и просмотр анализов изменения требований;
-- ввод исходного требования, предлагаемого изменения, ситуации и источника;
+- создание и просмотр анализов проектных запросов;
+- ввод исходного описания или требования, предлагаемого изменения или запроса, ситуации и источника;
 - ручное добавление контекста;
 - загрузка Markdown, TXT и JSON как подготовленных фрагментов контекста;
-- запуск LLM-анализа через provider adapter;
-- ранняя проверка реального LLM-вызова через DeepSeek как первый планируемый real provider;
+- запуск интеллектуального анализа через `IAiAnalysisEngine`;
+- первая реализация `DirectLlmAnalysisEngine`, которая формирует prompt, вызывает LLM через provider adapter и возвращает карту влияния;
 - deterministic demo/mock LLM provider для локальной демонстрации, тестов и воспроизводимости без внешних ключей;
+- опциональная проверка реального LLM-вызова через DeepSeek как первый планируемый real provider при наличии API key и разрешения на сетевой вызов;
 - структурированная карта влияния;
 - экспертная оценка и экспертное заключение;
 - Markdown и JSON экспорт;
@@ -40,7 +41,8 @@
 Не входит:
 
 - реальные интеграции с Jira, GitLab, Confluence, почтой, чатами;
-- RAG, embeddings, vector database;
+- собственный RAG, embeddings, rerank, agentic search и vector database;
+- Dify, Flowise, LangGraph, Haystack или аналогичная интеграция с внешним AI/RAG-движком;
 - task board, backlog, sprint workflow;
 - автоматическое изменение требований, документов, API или кода;
 - автоматическое создание pull request;
@@ -50,11 +52,14 @@
 
 Ограничения MVP не должны закрывать развитие программы. В реализации должны оставаться явные точки расширения:
 
-- `ILlmProvider` для замены или добавления LLM-провайдеров;
+- `IAiAnalysisEngine` для замены direct LLM-анализа будущим адаптером к внешнему AI/RAG-движку без переписывания программы;
+- `ILlmProvider` для замены или добавления LLM-провайдеров внутри `DirectLlmAnalysisEngine`;
 - `IContextImporter` или аналогичный слой для будущих источников контекста;
 - `IReportExporter` или аналогичный слой для будущих форматов экспорта;
 - стабильный JSON-экспорт для последующей экспериментальной обработки;
 - пассивные статусы анализа, которые можно использовать в будущем, но которые в MVP не запускают workflow.
+
+Будущие реализации `DifyAnalysisEngine`, `ExternalRagAnalysisEngine`, `CustomRagAnalysisEngine` или аналоги должны подключаться как adapter-компоненты за `IAiAnalysisEngine`. MVP-0 не реализует собственный RAG и не зависит от конкретного внешнего AI/RAG-движка.
 
 ## План task
 
@@ -128,7 +133,7 @@ Done:
 
 - `Analysis`;
 - `ContextFragment`;
-- `LlmAnalysisResult`;
+- `AiAnalysisResult`;
 - `ImpactMap`;
 - `ExpertEvaluation`;
 - `ExpertConclusion`;
@@ -159,7 +164,7 @@ Done:
 
 - EF Core mapping;
 - первая миграция;
-- хранение анализов, контекста, LLM-результата, карты влияния, экспертной оценки и заключения;
+- хранение анализов, контекста, результата интеллектуального анализа, карты влияния, экспертной оценки и заключения;
 - простой persistence test.
 
 Не входит:
@@ -221,7 +226,7 @@ Done:
 Не входит:
 
 - контекст;
-- запуск LLM;
+- запуск интеллектуального анализа;
 - экспертная оценка.
 
 Проверки:
@@ -339,21 +344,24 @@ Done:
 
 - пользователь видит входные данные перед запуском анализа.
 
-### Task 11. LLM contract и request assembly
+### Task 11. IAiAnalysisEngine contract и request assembly
 
-Цель: описать внутренний контракт LLM-анализа и сбор входного snapshot.
+Цель: ввести интерфейс `IAiAnalysisEngine`, описать внутренний контракт интеллектуального анализа и сбор входного snapshot.
 
 Входит:
 
+- `IAiAnalysisEngine` как application-level boundary для интеллектуального анализа;
 - структура запроса;
 - input snapshot;
 - структура ожидаемого результата;
 - marker, что результат является preliminary analytical material;
 - указание, что LLM не принимает решение.
 - provider-independent contract, пригодный и для DeepSeek, и для demo/mock provider.
+- правило, что UI, controllers, pages и бизнес-логика не вызывают LLM напрямую.
 
 Не входит:
 
+- конкретная реализация analysis engine;
 - конкретная реализация provider;
 - UI запуска анализа.
 
@@ -364,14 +372,17 @@ Done:
 
 Done:
 
-- приложение может построить воспроизводимый запрос для LLM-анализа.
+- приложение может построить воспроизводимый запрос для интеллектуального анализа и вызвать его только через `IAiAnalysisEngine`.
 
-### Task 12. LLM adapter boundary и provider configuration
+### Task 12. DirectLlmAnalysisEngine и provider configuration
 
-Цель: ввести общий provider boundary без привязки доменной логики к конкретному LLM-провайдеру.
+Цель: реализовать первую версию `IAiAnalysisEngine` как `DirectLlmAnalysisEngine` и ввести общий provider boundary без привязки доменной логики к конкретному LLM-провайдеру.
 
 Входит:
 
+- `DirectLlmAnalysisEngine`;
+- сбор prompt из проектного запроса и подготовленных материалов;
+- возврат карты влияния как результата для экспертной оценки и сохранения;
 - provider interface;
 - configuration model для выбора provider;
 - настройки для DeepSeek как планируемого первого real provider;
@@ -392,13 +403,41 @@ Done:
 
 Done:
 
-- приложение имеет общий LLM provider boundary и конфигурационную точку для DeepSeek без зашивания провайдера в доменную модель.
+- приложение имеет `DirectLlmAnalysisEngine`, общий LLM provider boundary и конфигурационную точку для DeepSeek без зашивания провайдера в доменную модель, UI или бизнес-логику.
 
-### Task 13. DeepSeek integration spike
+### Task 13. Deterministic demo/mock provider
 
-Цель: рано проверить, что реальный LLM-вызов через DeepSeek совместим с контрактом анализа.
+Цель: позволить запускать MVP без внешних ключей и сети.
 
-Зависимости: Task 11, Task 12, наличие DeepSeek API key и разрешение на сетевой smoke-вызов.
+Зависимости: Task 11, Task 12.
+
+Входит:
+
+- deterministic demo/mock provider;
+- генерация валидной структурированной карты влияния;
+- тот же `ILlmProvider` contract, что и у DeepSeek provider.
+
+Не входит:
+
+- реальный cloud provider;
+- выбор коммерческой модели;
+- streaming/chat UI.
+
+Проверки:
+
+- unit tests provider result;
+- `dotnet test`;
+- manual smoke без внешней сети.
+
+Done:
+
+- демо-анализ может получить валидный LLM-like результат локально.
+
+### Task 14. DeepSeek integration spike
+
+Цель: проверить, что реальный LLM-вызов через DeepSeek совместим с контрактом анализа, без превращения DeepSeek в обязательное условие MVP.
+
+Зависимости: Task 11, Task 12, Task 13, наличие DeepSeek API key и разрешение на сетевой smoke-вызов.
 
 Входит:
 
@@ -426,37 +465,11 @@ Done:
 
 - подтверждено, что реальный DeepSeek-вызов может вернуть материал, совместимый с LLM-контрактом, либо зафиксированы ограничения, которые нужно учесть до дальнейшей реализации.
 
-Если на момент выполнения Task 13 нет API key или разрешения на сетевой вызов, task не выполняется обходным способом. В этом случае фиксируется блокер внешней конфигурации, а дальнейшую локальную реализацию можно продолжить через Task 14 с demo/mock provider, если пользователь явно разрешит такой порядок.
-
-### Task 14. Deterministic demo/mock provider
-
-Цель: позволить запускать MVP без внешних ключей и сети.
-
-Входит:
-
-- deterministic demo/mock provider;
-- генерация валидной структурированной карты влияния;
-- тот же `ILlmProvider` contract, что и у DeepSeek provider.
-
-Не входит:
-
-- реальный cloud provider;
-- выбор коммерческой модели;
-- streaming/chat UI.
-
-Проверки:
-
-- unit tests provider result;
-- `dotnet test`;
-- manual smoke без внешней сети.
-
-Done:
-
-- демо-анализ может получить валидный LLM-like результат локально.
+Если на момент выполнения Task 14 нет API key или разрешения на сетевой вызов, task не выполняется обходным способом. В этом случае фиксируется блокер внешней конфигурации, а MVP продолжает опираться на локальный deterministic demo/mock provider из Task 13.
 
 ### Task 15. Validation и fallback LLM-ответа
 
-Цель: обработать корректный, частичный и некорректный LLM-результат.
+Цель: обработать корректный, частичный и некорректный результат интеллектуального анализа.
 
 Входит:
 
@@ -482,12 +495,12 @@ Done:
 
 ### Task 16. Запуск анализа и карта влияния
 
-Цель: связать analysis review, provider и отображение результата.
+Цель: связать analysis review, `IAiAnalysisEngine` и отображение результата.
 
 Входит:
 
 - action запуска анализа;
-- сохранение LLM-результата;
+- сохранение результата интеллектуального анализа;
 - стабильные id элементов карты влияния;
 - отображение карты влияния;
 - label, что это предварительный аналитический материал.
@@ -509,7 +522,7 @@ Done:
 
 ### Task 17. Экспертная оценка
 
-Цель: позволить человеку проверить LLM-результат.
+Цель: позволить человеку проверить результат интеллектуального анализа.
 
 Входит:
 
@@ -599,7 +612,7 @@ Done:
 
 Входит:
 
-- stable top-level fields: `metadata`, `input`, `contextFragments`, `llmAnalysisResult`, `impactMap`, `expertEvaluation`, `expertConclusion`, `exportMetadata`;
+- stable top-level fields: `metadata`, `input`, `contextFragments`, `aiAnalysisResult`, `impactMap`, `expertEvaluation`, `expertConclusion`, `exportMetadata`;
 - стабильные id элементов карты влияния;
 - expert marks;
 - missed items;
@@ -654,7 +667,7 @@ Done:
 - подготовленный обезличенный кейс;
 - создание анализа;
 - добавление контекста;
-- запуск LLM-анализа через demo provider;
+- запуск интеллектуального анализа через `DirectLlmAnalysisEngine` с demo provider;
 - экспертная оценка;
 - экспертное заключение;
 - Markdown export;
@@ -690,10 +703,10 @@ Done:
 8. Task 8 - ручной контекст.
 9. Task 9 - загрузка файлов.
 10. Task 10 - review входных данных.
-11. Task 11 - LLM contract и request assembly.
-12. Task 12 - LLM adapter boundary и provider configuration.
-13. Task 13 - DeepSeek integration spike.
-14. Task 14 - deterministic demo/mock provider.
+11. Task 11 - IAiAnalysisEngine contract и request assembly.
+12. Task 12 - DirectLlmAnalysisEngine и provider configuration.
+13. Task 13 - deterministic demo/mock provider.
+14. Task 14 - DeepSeek integration spike.
 15. Task 15 - validation и fallback.
 16. Task 16 - запуск анализа и карта влияния.
 17. Task 17 - экспертная оценка.
