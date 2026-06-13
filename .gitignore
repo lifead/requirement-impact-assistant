@@ -1,0 +1,6 @@
+/.dotnet_home/
+/.nuget/
+/.vs/
+*.user
+/**/bin/
+/**/obj/
