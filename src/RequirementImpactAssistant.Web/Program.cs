@@ -1,7 +1,10 @@
+using RequirementImpactAssistant.Web.Extensions;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorPages();
+builder.Services.AddApplicationPersistence(builder.Configuration);
 
 var app = builder.Build();
 
