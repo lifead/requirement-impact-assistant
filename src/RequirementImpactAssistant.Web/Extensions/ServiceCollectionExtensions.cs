@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
+using RequirementImpactAssistant.Web.Application.Export;
 using RequirementImpactAssistant.Web.Data;
 
 namespace RequirementImpactAssistant.Web.Extensions;
@@ -61,6 +62,13 @@ public static class ServiceCollectionExtensions
             throw new InvalidOperationException(
                 $"LLM provider '{options.Provider}' is configured, but no provider implementation is registered for it.");
         });
+
+        return services;
+    }
+
+    public static IServiceCollection AddApplicationExport(this IServiceCollection services)
+    {
+        services.AddScoped<IAnalysisMarkdownExportService, AnalysisMarkdownExportService>();
 
         return services;
     }

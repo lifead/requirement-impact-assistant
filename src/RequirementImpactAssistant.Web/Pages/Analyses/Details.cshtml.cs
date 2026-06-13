@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using System.Text;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -9,10 +10,14 @@ using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
+using RequirementImpactAssistant.Web.Application.Export;
 
 namespace RequirementImpactAssistant.Web.Pages.Analyses;
 
-public sealed class DetailsModel(ApplicationDbContext dbContext, IWebHostEnvironment? webHostEnvironment = null) : PageModel
+public sealed class DetailsModel(
+    ApplicationDbContext dbContext,
+    IWebHostEnvironment? webHostEnvironment = null,
+    IAnalysisMarkdownExportService? markdownExportService = null) : PageModel
 {
     private const long MaxUploadFileSizeBytes = 1_048_576;
 
@@ -43,6 +48,22 @@ public sealed class DetailsModel(ApplicationDbContext dbContext, IWebHostEnviron
         return Analysis is null
             ? NotFound()
             : Page();
+    }
+
+    public async Task<IActionResult> OnGetExportMarkdownAsync(Guid id)
+    {
+        var exportService = markdownExportService ?? new AnalysisMarkdownExportService(dbContext);
+        var result = await exportService.ExportAsync(id, DateTimeOffset.UtcNow);
+
+        return result.Kind switch
+        {
+            AnalysisMarkdownExportResultKind.NotFound => NotFound(),
+            AnalysisMarkdownExportResultKind.Unavailable => BadRequest(result.Message),
+            _ => File(
+                Encoding.UTF8.GetBytes(result.Markdown),
+                AnalysisMarkdownExportService.ContentType,
+                result.FileName)
+        };
     }
 
     public async Task<IActionResult> OnPostAddContextFragmentAsync(Guid id)

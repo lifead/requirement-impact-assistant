@@ -6,6 +6,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddRazorPages();
 builder.Services.AddApplicationPersistence(builder.Configuration);
 builder.Services.AddApplicationAnalysis(builder.Configuration);
+builder.Services.AddApplicationExport();
 
 var app = builder.Build();
 
