@@ -778,30 +778,55 @@ Done:
 
 Цель: позволить человеку проверить результат интеллектуального анализа.
 
+Зависимости:
+
+- Task 16;
+- Task 17 должна быть реализуема и проверяема без DeepSeek API key, user secrets и network access.
+
 Входит:
 
-- отметки confirmed/corrected/rejected/needsClarification;
-- комментарий к отметке;
-- фиксация пропущенных элементов;
-- корректировки;
-- оценка достаточности контекста;
-- оценка полезности результата.
+- форма экспертной оценки только для анализа с сохраненным `AiAnalysisResult` и непустой `ImpactMap`;
+- отображение всех элементов карты влияния с их стабильными id и возможностью поставить отметку `Confirmed`, `Corrected`, `Rejected`, `NeedsClarification`;
+- комментарий к отметке и `CorrectionText` для скорректированных элементов;
+- фиксация пропущенных элементов как `ExpertMissedItem`: `ItemType`, `Title`, `Description`, `Severity`, `Comment`;
+- фиксация дополнительных корректировок как `ExpertCorrection`, привязанных к `TargetId` стабильного элемента карты;
+- общая оценка достаточности контекста через существующий `ContextSufficiencyRating`;
+- общая оценка полезности результата через существующий `ResultUsefulnessRating`;
+- общий комментарий экспертной оценки;
+- сохранение/обновление одной `ExpertEvaluation` текущего анализа без создания экспертного заключения.
 
 Не входит:
 
-- детальный аудит;
-- workflow согласования;
-- назначение эксперта.
+- экспертное заключение и статус `ExpertConclusionFixed`;
+- выбор итогового решения, варианты split / return for reanalysis;
+- export;
+- защита evaluated/exported snapshots, потому что это scope Task 21;
+- rerun AI analysis;
+- DeepSeek/network/secrets scope;
+- workflow согласования, назначение эксперта, роли и права доступа.
+
+Границы:
+
+- экспертная оценка не создается для failed/invalid результата без структурированной карты влияния;
+- Task 17 не вызывает `IAiAnalysisEngine`, LLM provider или внешние сервисы;
+- Task 17 не выполняет автоматических управленческих действий и не создает задач;
+- если сохраняется экспертная оценка, она привязывается к текущему анализу и стабильным id элементов карты влияния;
+- при повторном сохранении в рамках Task 17 допустимо обновлять существующую `ExpertEvaluation`, но не создавать несколько оценок для одного анализа;
+- статус анализа не переводится в `ExpertConclusionFixed`; итоговая фиксация остается scope Task 18.
 
 Проверки:
 
 - save/reload test;
 - UI smoke with all mark types;
 - test missed item persistence.
+- test no evaluation for failed/invalid result without structured impact map;
+- test update existing evaluation instead of creating duplicate evaluation for the same analysis;
+- tests do not require DeepSeek API key, user secrets or network access.
 
 Done:
 
-- экспертная оценка сохраняется и привязана к стабильным id элементов карты.
+- экспертная оценка сохраняется или обновляется как одна `ExpertEvaluation` текущего анализа и привязана к стабильным id элементов карты;
+- Task 17 можно передать в реализацию без расширения scope до экспертного заключения, DeepSeek, сети, секретов, rerun AI analysis, workflow согласования и защиты evaluated/exported snapshots.
 
 ### Task 18. Экспертное заключение
 
