@@ -28,6 +28,14 @@
                         Expert evaluation
                     </a>
                 }
+                @if (Model.Analysis.HasExpertEvaluation)
+                {
+                    <a class="btn btn-outline-success btn-sm"
+                       asp-page="/Analyses/ExpertConclusion"
+                       asp-route-id="@Model.Analysis.Id">
+                        Expert conclusion
+                    </a>
+                }
                 <a class="btn btn-outline-secondary btn-sm"
                    asp-page="/Analyses/Review"
                    asp-route-id="@Model.Analysis.Id">
@@ -72,6 +80,30 @@
             <dd class="col-sm-9">@Model.Analysis.SituationDescription</dd>
         </dl>
     </section>
+
+    @if (Model.Analysis.ExpertConclusion is not null)
+    {
+        <section class="py-4 border-top">
+            <div class="mb-4">
+                <h2 class="h4 mb-2">Expert conclusion</h2>
+                <p class="text-muted mb-0">Final conclusion fixed by the human expert.</p>
+            </div>
+
+            <dl class="row">
+                <dt class="col-sm-3">Type</dt>
+                <dd class="col-sm-9">@Model.Analysis.ExpertConclusion.ConclusionType</dd>
+
+                <dt class="col-sm-3">Fixed</dt>
+                <dd class="col-sm-9">@(Model.Analysis.ExpertConclusion.FixedAt?.ToLocalTime().ToString("g") ?? "Not fixed")</dd>
+
+                <dt class="col-sm-3">Comment</dt>
+                <dd class="col-sm-9">@Model.Analysis.ExpertConclusion.Comment</dd>
+
+                <dt class="col-sm-3">Rationale</dt>
+                <dd class="col-sm-9">@Model.Analysis.ExpertConclusion.Rationale</dd>
+            </dl>
+        </section>
+    }
 
     <section class="py-4 border-top">
         <div class="mb-4">

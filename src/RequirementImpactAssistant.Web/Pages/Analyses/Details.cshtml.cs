@@ -169,6 +169,14 @@ public sealed class DetailsModel(ApplicationDbContext dbContext, IWebHostEnviron
             analysis.CreatedAt,
             analysis.UpdatedAt,
             analysis.FixedAt,
+            analysis.ExpertEvaluation is not null,
+            analysis.ExpertConclusion is null
+                ? null
+                : new ExpertConclusionDetails(
+                    analysis.ExpertConclusion.ConclusionType,
+                    analysis.ExpertConclusion.Comment,
+                    analysis.ExpertConclusion.Rationale,
+                    analysis.ExpertConclusion.FixedAt),
             analysis.AiAnalysisResult is null
                 ? null
                 : new AiAnalysisResultDetails(
@@ -200,6 +208,8 @@ public sealed class DetailsModel(ApplicationDbContext dbContext, IWebHostEnviron
             .AsNoTracking()
             .Include(candidate => candidate.ContextFragments)
             .Include(candidate => candidate.AiAnalysisResult)
+            .Include(candidate => candidate.ExpertEvaluation)
+            .Include(candidate => candidate.ExpertConclusion)
             .SingleOrDefaultAsync(candidate => candidate.Id == id);
 
         return analysis is null
@@ -218,8 +228,16 @@ public sealed class DetailsModel(ApplicationDbContext dbContext, IWebHostEnviron
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt,
         DateTimeOffset? FixedAt,
+        bool HasExpertEvaluation,
+        ExpertConclusionDetails? ExpertConclusion,
         AiAnalysisResultDetails? AiAnalysisResult,
         IReadOnlyList<ContextFragmentDetails> ContextFragments);
+
+    public sealed record ExpertConclusionDetails(
+        ExpertConclusionType ConclusionType,
+        string Comment,
+        string Rationale,
+        DateTimeOffset? FixedAt);
 
     public sealed record AiAnalysisResultDetails(
         AiAnalysisResultStatus Status,

@@ -1786,6 +1786,386 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
+    public async Task ExpertConclusionPage_OpensOnlyForAnalysisWithExpertEvaluation()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            analysis.ExpertEvaluation = CreateExpertEvaluation(analysis.Id);
+            var withoutEvaluation = CreateAnalysis(
+                "Billing migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 09, 00, 00, TimeSpan.Zero));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.AddRange(analysis, withoutEvaluation);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertConclusionModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                Assert.Equal(analysis.Id, pageModel.Analysis.Id);
+                Assert.Equal(ExpertConclusionType.NotSet, pageModel.Input.ConclusionType);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertConclusionModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(withoutEvaluation.Id);
+
+                Assert.IsType<NotFoundResult>(result);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExpertConclusionPage_DoesNotCreateConclusionOrChangeStatusWithoutExpertEvaluation()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var originalUpdatedAt = new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero);
+            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.NeedsExpertEvaluation, originalUpdatedAt);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertConclusionModel(dbContext)
+                {
+                    Input = new ExpertConclusionModel.ExpertConclusionInput
+                    {
+                        ConclusionType = ExpertConclusionType.Accept,
+                        Comment = "Accepted by expert.",
+                        Rationale = "The saved evaluation supports acceptance."
+                    }
+                };
+
+                var result = await pageModel.OnPostAsync(analysis.Id);
+
+                Assert.IsType<NotFoundResult>(result);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var unchanged = await dbContext.Analyses
+                    .Include(candidate => candidate.ExpertConclusion)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(AnalysisStatus.NeedsExpertEvaluation, unchanged.Status);
+                Assert.Equal(originalUpdatedAt, unchanged.UpdatedAt);
+                Assert.Null(unchanged.FixedAt);
+                Assert.Null(unchanged.ExpertConclusion);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExpertConclusionPage_SavesConclusionFieldsFixedAtAndStatusWithoutCallingAiServices()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var originalUpdatedAt = new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero);
+            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.NeedsExpertEvaluation, originalUpdatedAt);
+            analysis.ExpertEvaluation = CreateExpertEvaluation(analysis.Id);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            var beforeSave = DateTimeOffset.UtcNow;
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertConclusionModel(dbContext)
+                {
+                    Input = new ExpertConclusionModel.ExpertConclusionInput
+                    {
+                        ConclusionType = ExpertConclusionType.AcceptWithLimitations,
+                        Comment = " Accept with rollout limits. ",
+                        Rationale = " Expert evaluation confirms core impact map with limitations. "
+                    }
+                };
+
+                var result = await pageModel.OnPostAsync(analysis.Id);
+                var redirect = Assert.IsType<RedirectToPageResult>(result);
+
+                Assert.Equal("/Analyses/ExpertConclusion", redirect.PageName);
+                Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
+            }
+
+            var afterSave = DateTimeOffset.UtcNow;
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var updated = await dbContext.Analyses
+                    .Include(candidate => candidate.ExpertConclusion)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(AnalysisStatus.ExpertConclusionFixed, updated.Status);
+                Assert.True(updated.UpdatedAt >= beforeSave);
+                Assert.True(updated.UpdatedAt <= afterSave);
+                Assert.NotNull(updated.FixedAt);
+                Assert.True(updated.FixedAt >= beforeSave);
+                Assert.True(updated.FixedAt <= afterSave);
+
+                var conclusion = Assert.IsType<ExpertConclusion>(updated.ExpertConclusion);
+                Assert.Equal(ExpertConclusionType.AcceptWithLimitations, conclusion.ConclusionType);
+                Assert.Equal("Accept with rollout limits.", conclusion.Comment);
+                Assert.Equal("Expert evaluation confirms core impact map with limitations.", conclusion.Rationale);
+                Assert.NotNull(conclusion.FixedAt);
+                Assert.Equal(updated.FixedAt, conclusion.FixedAt);
+                Assert.True(conclusion.FixedAt >= beforeSave);
+                Assert.True(conclusion.FixedAt <= afterSave);
+                Assert.Equal(1, await dbContext.ExpertConclusions.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExpertConclusionPage_ReturnsValidationErrorForMissingConclusionTypeAndRationale()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var originalUpdatedAt = new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero);
+            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.NeedsExpertEvaluation, originalUpdatedAt);
+            analysis.ExpertEvaluation = CreateExpertEvaluation(analysis.Id);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertConclusionModel(dbContext)
+                {
+                    Input = new ExpertConclusionModel.ExpertConclusionInput
+                    {
+                        ConclusionType = ExpertConclusionType.NotSet,
+                        Comment = "Incomplete conclusion.",
+                        Rationale = " "
+                    }
+                };
+
+                var result = await pageModel.OnPostAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.False(pageModel.ModelState.IsValid);
+                Assert.NotNull(pageModel.Analysis);
+                Assert.Contains(
+                    pageModel.ModelState.Values.SelectMany(value => value.Errors),
+                    error => error.ErrorMessage == "Conclusion type is required.");
+                Assert.Contains(
+                    pageModel.ModelState.Values.SelectMany(value => value.Errors),
+                    error => error.ErrorMessage == "Rationale is required.");
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var unchanged = await dbContext.Analyses
+                    .Include(candidate => candidate.ExpertConclusion)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(AnalysisStatus.NeedsExpertEvaluation, unchanged.Status);
+                Assert.Equal(originalUpdatedAt, unchanged.UpdatedAt);
+                Assert.Null(unchanged.FixedAt);
+                Assert.Null(unchanged.ExpertConclusion);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExpertConclusionPage_RepeatedSaveUpdatesSingleConclusion()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            analysis.ExpertEvaluation = CreateExpertEvaluation(analysis.Id);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertConclusionModel(dbContext)
+                {
+                    Input = new ExpertConclusionModel.ExpertConclusionInput
+                    {
+                        ConclusionType = ExpertConclusionType.Accept,
+                        Comment = "Accepted.",
+                        Rationale = "Evaluation is sufficient."
+                    }
+                };
+
+                Assert.IsType<RedirectToPageResult>(await pageModel.OnPostAsync(analysis.Id));
+            }
+
+            Guid conclusionId;
+            DateTimeOffset firstFixedAt;
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var conclusion = await dbContext.ExpertConclusions.SingleAsync(candidate => candidate.AnalysisId == analysis.Id);
+                conclusionId = conclusion.Id;
+                firstFixedAt = Assert.IsType<DateTimeOffset>(conclusion.FixedAt);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertConclusionModel(dbContext)
+                {
+                    Input = new ExpertConclusionModel.ExpertConclusionInput
+                    {
+                        ConclusionType = ExpertConclusionType.SendForClarification,
+                        Comment = "Need clarification.",
+                        Rationale = "Evaluation exposed unresolved product questions."
+                    }
+                };
+
+                Assert.IsType<RedirectToPageResult>(await pageModel.OnPostAsync(analysis.Id));
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var updated = await dbContext.Analyses
+                    .Include(candidate => candidate.ExpertConclusion)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                var conclusion = Assert.IsType<ExpertConclusion>(updated.ExpertConclusion);
+                Assert.Equal(conclusionId, conclusion.Id);
+                Assert.Equal(ExpertConclusionType.SendForClarification, conclusion.ConclusionType);
+                Assert.Equal("Need clarification.", conclusion.Comment);
+                Assert.Equal("Evaluation exposed unresolved product questions.", conclusion.Rationale);
+                Assert.True(conclusion.FixedAt >= firstFixedAt);
+                Assert.Equal(AnalysisStatus.ExpertConclusionFixed, updated.Status);
+                Assert.Equal(1, await dbContext.ExpertConclusions.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Theory]
+    [InlineData(ExpertConclusionType.SplitIntoSeveralTasks)]
+    [InlineData(ExpertConclusionType.ReturnForReanalysis)]
+    public async Task ExpertConclusionPage_PassiveWorkflowConclusionTypesAreOnlySavedAsEnumValues(
+        ExpertConclusionType conclusionType)
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            analysis.ExpertEvaluation = CreateExpertEvaluation(analysis.Id);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertConclusionModel(dbContext)
+                {
+                    Input = new ExpertConclusionModel.ExpertConclusionInput
+                    {
+                        ConclusionType = conclusionType,
+                        Comment = "Passive expert conclusion.",
+                        Rationale = "This records the expert outcome only."
+                    }
+                };
+
+                Assert.IsType<RedirectToPageResult>(await pageModel.OnPostAsync(analysis.Id));
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var updated = await dbContext.Analyses
+                    .Include(candidate => candidate.ExpertEvaluation)
+                    .Include(candidate => candidate.ExpertConclusion)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(AnalysisStatus.ExpertConclusionFixed, updated.Status);
+                Assert.NotNull(updated.ExpertEvaluation);
+                var conclusion = Assert.IsType<ExpertConclusion>(updated.ExpertConclusion);
+                Assert.Equal(conclusionType, conclusion.ConclusionType);
+                Assert.Equal(1, await dbContext.ExpertEvaluations.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
+                Assert.Equal(1, await dbContext.ExpertConclusions.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
+                Assert.Empty(await dbContext.ContextFragments.Where(candidate => candidate.AnalysisId == analysis.Id).ToListAsync());
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task Pages_DisplayPassiveStatusWithoutChangingItOrStartingActions()
     {
         var databasePath = CreateDatabasePath();
@@ -2015,6 +2395,15 @@ public sealed class AnalysisPagesTests
 
         return input;
     }
+
+    private static ExpertEvaluation CreateExpertEvaluation(Guid analysisId) =>
+        new()
+        {
+            AnalysisId = analysisId,
+            ContextSufficiency = ContextSufficiencyRating.PartiallySufficient,
+            ResultUsefulness = ResultUsefulnessRating.Useful,
+            GeneralComment = "Saved expert evaluation."
+        };
 
     private static IEnumerable<ImpactMapItem> EnumerateImpactItems(ImpactMap impactMap) =>
     [
