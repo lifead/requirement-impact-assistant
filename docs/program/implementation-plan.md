@@ -832,30 +832,52 @@ Done:
 
 Цель: зафиксировать итоговое заключение человека.
 
+Зависимости:
+
+- Task 17;
+- Task 18 должна быть реализуема и проверяема без DeepSeek API key, user secrets и network access.
+
 Входит:
 
-- тип заключения;
+- форма фиксации экспертного заключения только для анализа с сохраненной `ExpertEvaluation`;
+- тип заключения: `Accept`, `AcceptWithLimitations`, `SendForClarification`, `SplitIntoSeveralTasks`, `Reject`, `ReturnForReanalysis`;
 - комментарий;
 - основание;
-- дата фиксации;
-- статус `expertConclusionFixed`;
-- запрет на автоматические действия для вариантов "split" и "return for reanalysis".
+- дата фиксации `FixedAt`;
+- сохранение/обновление одного `ExpertConclusion` текущего анализа;
+- перевод статуса анализа в `ExpertConclusionFixed`.
 
 Не входит:
 
 - создание задач;
 - отправка уведомлений;
-- approval workflow.
+- approval workflow;
+- export;
+- защита evaluated/exported snapshots, потому что это scope Task 21;
+- rerun AI analysis;
+- DeepSeek/network/secrets scope.
+
+Границы:
+
+- Task 18 не вызывает `IAiAnalysisEngine`, LLM provider или внешние сервисы;
+- варианты `SplitIntoSeveralTasks` и `ReturnForReanalysis` фиксируются только как вывод эксперта и не запускают workflow, не создают задачи и не выполняют внешних действий;
+- Task 18 не реализует snapshot protection и не запрещает повторный анализ сверх уже существующих правил; защита воспроизводимости остается scope Task 21;
+- если экспертное заключение уже существует, повторное сохранение обновляет существующее заключение, а не создает несколько заключений для одного анализа;
+- статус использовать как `ExpertConclusionFixed` согласно enum/code naming.
 
 Проверки:
 
 - validation tests;
 - save/reload test;
-- status test.
+- status test;
+- test update existing conclusion instead of creating duplicate conclusion for the same analysis;
+- tests do not require DeepSeek API key, user secrets or network access.
 
 Done:
 
-- экспертное заключение зафиксировано как часть артефакта анализа.
+- экспертное заключение сохраняется или обновляется как один `ExpertConclusion` текущего анализа только после сохраненной `ExpertEvaluation`;
+- статус анализа переведен в `ExpertConclusionFixed`;
+- Task 18 можно передать в реализацию без расширения scope до создания задач, уведомлений, approval workflow, export, snapshot protection, rerun AI analysis, DeepSeek, сети и секретов.
 
 ### Task 19. Markdown export
 
