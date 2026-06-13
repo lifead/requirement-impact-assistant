@@ -667,27 +667,57 @@ Done:
 
 Цель: обработать корректный, частичный и некорректный результат интеллектуального анализа.
 
+Зависимости:
+
+- Task 11, Task 12 и Task 13;
+- Task 14 не является блокером, если по ней зафиксирован внешний блокер конфигурации или ограничения;
+- Task 15 должна быть реализуема и проверяема без DeepSeek, секретов и network access.
+
 Входит:
 
-- минимально валидная структура ответа;
-- validation errors;
-- сохранение raw response;
+- validation на application/provider boundary вокруг `DirectLlmAnalysisEngine`, `LlmProviderResponse` и `AiAnalysisResponse`;
+- минимально валидная структура response/result object;
+- validation errors для критических и некритических проблем ответа;
+- возврат raw response в response/result object без потери диагностического материала;
 - состояние ошибки без экспертного заключения.
 
 Не входит:
 
 - сложная JSON Schema;
-- автоматическое исправление ответа LLM.
+- автоматическое исправление ответа LLM;
+- UI запуска анализа;
+- persistence результата интеллектуального анализа в БД;
+- отображение карты влияния;
+- обязательная запись raw response в SQLite;
+- расширение prompt сверх минимально необходимого для согласования формата ответа;
+- новые `Analysis.Status`, если это не требуется согласованным планом.
+
+Минимально валидный результат:
+
+- `ImpactMap` не null;
+- обязательные singleton-секции `changeSummary` и `preliminaryAssessment` присутствуют и имеют стабильные id;
+- коллекции карты влияния могут быть пустыми;
+- отсутствующие критические секции приводят к `Failed` или equivalent `InvalidResponse` на уровне response;
+- частичные некритические проблемы приводят к `Partial` и validation errors.
+
+Fallback:
+
+- при raw-only, malformed JSON или невалидной структуре raw response сохраняется и возвращается как диагностика;
+- приложение не создает экспертное заключение и не додумывает карту влияния;
+- реализация и тесты остаются локальными, без секретов и сетевых вызовов.
 
 Проверки:
 
 - tests valid response;
 - tests missing critical sections;
 - tests raw-response fallback.
+- tests partial non-critical response;
+- обычные unit/integration tests не требуют API key, DeepSeek или network access.
 
 Done:
 
-- приложение не теряет raw response и не выдумывает решение при ошибке.
+- приложение не теряет raw response и не выдумывает решение при ошибке;
+- Task 15 можно передать в реализацию без зависимости от реального DeepSeek-вызова, секретов, сети, UI запуска анализа и persistence.
 
 ### Task 16. Запуск анализа и карта влияния
 
