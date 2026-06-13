@@ -587,25 +587,35 @@ Done:
 
 Входит:
 
-- deterministic demo/mock provider;
-- генерация валидной структурированной карты влияния;
-- тот же `ILlmProvider` contract, что и у DeepSeek provider.
+- deterministic demo/mock provider как реализация существующего `ILlmProvider`;
+- регистрация demo/mock provider в DI/configuration selection, чтобы `DirectLlmAnalysisEngine` мог использовать его без внешних ключей и сети;
+- генерация валидного `ImpactMap` через существующую доменную модель и `ImpactMap`/`ImpactMapItem` helpers;
+- возврат `LlmProviderResponse` со статусом success, raw response и пустым списком ошибок для успешного demo-сценария;
+- deterministic поведение: одинаковый provider request дает одинаковый результат;
+- отсутствие сетевых вызовов, SDK внешних provider-ов и секретов.
 
 Не входит:
 
-- реальный cloud provider;
-- выбор коммерческой модели;
+- UI запуска анализа;
+- сохранение `AiAnalysisResult`;
+- изменение статуса анализа;
+- real cloud provider / DeepSeek implementation;
+- JSON validation и fallback LLM-ответа;
+- RAG, embeddings, external AI/RAG integration;
 - streaming/chat UI.
 
 Проверки:
 
-- unit tests provider result;
+- unit tests, что demo/mock provider возвращает валидный `ImpactMap`;
+- unit tests, что результат deterministic для одинакового запроса;
+- unit tests, что provider не требует секретов и не обращается к внешней сети;
+- unit/integration test provider selection/configuration для demo/mock provider;
 - `dotnet test`;
-- manual smoke без внешней сети.
+- manual smoke без внешней сети, только если после Task 13 уже есть исполняемый путь через `DirectLlmAnalysisEngine`.
 
 Done:
 
-- демо-анализ может получить валидный LLM-like результат локально.
+- демо-анализ может получить валидный LLM-like результат локально через `DirectLlmAnalysisEngine`, без внешних ключей, сети, внешних SDK и секретов.
 
 ### Task 14. DeepSeek integration spike
 
