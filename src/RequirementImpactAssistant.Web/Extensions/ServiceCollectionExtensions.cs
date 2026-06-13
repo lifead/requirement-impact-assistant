@@ -41,6 +41,7 @@ public static class ServiceCollectionExtensions
 
         services.AddScoped<IAiAnalysisEngine, DirectLlmAnalysisEngine>();
         services.TryAddScoped<DemoLlmProvider>();
+        services.AddHttpClient<DeepSeekLlmProvider>();
         services.TryAddScoped<ILlmProvider>(serviceProvider =>
         {
             var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<AiAnalysisOptions>>().Value;
@@ -48,6 +49,11 @@ public static class ServiceCollectionExtensions
             if (string.Equals(options.Provider, LlmProviderNames.Demo, StringComparison.OrdinalIgnoreCase))
             {
                 return serviceProvider.GetRequiredService<DemoLlmProvider>();
+            }
+
+            if (string.Equals(options.Provider, LlmProviderNames.DeepSeek, StringComparison.OrdinalIgnoreCase))
+            {
+                return serviceProvider.GetRequiredService<DeepSeekLlmProvider>();
             }
 
             throw new InvalidOperationException(
