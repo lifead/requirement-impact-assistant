@@ -141,7 +141,7 @@ public sealed class AnalysisPagesTests
                 var analysis = await dbContext.Analyses.SingleAsync(candidate => candidate.Id == analysisId);
 
                 Assert.Equal("Payment API change", analysis.Title);
-                Assert.Equal(AnalysisStatus.Draft, analysis.Status);
+                Assert.Equal(AnalysisStatus.ReadyForAnalysis, analysis.Status);
                 Assert.Equal("Original requirement for Payment API change", analysis.OriginalDescription);
                 Assert.Equal("Project request for Payment API change", analysis.ProjectRequest);
                 Assert.Equal("Situation for Payment API change", analysis.SituationDescription);
@@ -227,7 +227,7 @@ public sealed class AnalysisPagesTests
                 Assert.Equal("Change source for Edited request", updated.ChangeSource);
                 Assert.Equal(analysis.CreatedAt, updated.CreatedAt);
                 Assert.True(updated.UpdatedAt > originalUpdatedAt);
-                Assert.Equal(AnalysisStatus.Draft, updated.Status);
+                Assert.Equal(AnalysisStatus.ReadyForAnalysis, updated.Status);
             }
         }
         finally
@@ -271,6 +271,67 @@ public sealed class AnalysisPagesTests
 
                 Assert.Equal("Existing request", unchanged.Title);
                 Assert.Equal(originalUpdatedAt, unchanged.UpdatedAt);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task Pages_DisplayPassiveStatusWithoutChangingItOrStartingActions()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Incomplete request",
+                AnalysisStatus.InputIncomplete,
+                new DateTimeOffset(2026, 06, 13, 10, 00, 00, TimeSpan.Zero));
+            analysis.ProjectRequest = string.Empty;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new IndexModel(dbContext);
+
+                await pageModel.OnGetAsync();
+
+                var item = Assert.Single(pageModel.Analyses);
+                Assert.Equal(AnalysisStatus.InputIncomplete, item.Status);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                Assert.Equal(AnalysisStatus.InputIncomplete, pageModel.Analysis.Status);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var unchanged = await dbContext.Analyses
+                    .Include(candidate => candidate.ContextFragments)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(AnalysisStatus.InputIncomplete, unchanged.Status);
+                Assert.Empty(unchanged.ContextFragments);
+                Assert.Null(unchanged.AiAnalysisResult);
+                Assert.Null(unchanged.ExpertEvaluation);
+                Assert.Null(unchanged.ExpertConclusion);
             }
         }
         finally

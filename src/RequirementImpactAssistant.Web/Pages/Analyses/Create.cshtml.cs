@@ -28,6 +28,7 @@ public sealed class CreateModel(ApplicationDbContext dbContext) : PageModel
             UpdatedAt = now
         };
         Input.ApplyTo(analysis);
+        analysis.Status = AnalysisStatusCalculator.Calculate(analysis);
 
         dbContext.Analyses.Add(analysis);
         await dbContext.SaveChangesAsync();

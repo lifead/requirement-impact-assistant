@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
 using RequirementImpactAssistant.Web.Data;
+using RequirementImpactAssistant.Web.Domain;
 
 namespace RequirementImpactAssistant.Web.Pages.Analyses;
 
@@ -47,6 +48,7 @@ public sealed class EditModel(ApplicationDbContext dbContext) : PageModel
         }
 
         Input.ApplyTo(analysis);
+        analysis.Status = AnalysisStatusCalculator.Calculate(analysis);
         analysis.UpdatedAt = DateTimeOffset.UtcNow;
 
         await dbContext.SaveChangesAsync();
