@@ -721,30 +721,58 @@ Done:
 
 ### Task 16. Запуск анализа и карта влияния
 
-Цель: связать analysis review, `IAiAnalysisEngine` и отображение результата.
+Цель: связать analysis review, application-level запуск `IAiAnalysisEngine`, сохранение результата и отображение карты влияния.
+
+Зависимости:
+
+- Task 10, Task 11, Task 12, Task 13 и Task 15;
+- Task 14 не является блокером, если по ней зафиксирован внешний блокер конфигурации или ограничения;
+- Task 16 должна быть реализуема и проверяема без DeepSeek API key, user secrets и network access.
 
 Входит:
 
-- action запуска анализа;
-- сохранение результата интеллектуального анализа;
+- action запуска анализа из review/details flow через application-level service;
+- service загружает текущий `Analysis` вместе с `ContextFragment`, собирает request через `IAnalysisInputAssembler`, вызывает `IAiAnalysisEngine` и сохраняет `AiAnalysisResult`;
+- Razor Page/PageModel передает данные в application service и не вызывает LLM provider напрямую;
+- при отсутствии минимальных входных данных запуск не выполняется, пользователь остается на review/details flow и видит понятное сообщение;
+- сохранение результата в существующий `AiAnalysisResult` текущего анализа в пределах уже существующей модели: raw response, input snapshot, status, generated timestamp, impact map, errors/diagnostic text и metadata engine/provider/model/prompt version;
+- mapping статусов из `AiAnalysisResponse`: `Succeeded` -> `Completed`, `Partial` -> `CompletedWithWarnings`, `Failed` -> `Failed` или `InvalidResponse` по уже согласованной validation/fallback логике;
+- перезапись предыдущего AI-result только до экспертной оценки/экспорта;
 - стабильные id элементов карты влияния;
-- отображение карты влияния;
-- label, что это предварительный аналитический материал.
+- отображение всех согласованных секций `ImpactMap`;
+- отображение raw/error diagnostics для failed/partial результата без создания экспертной оценки или экспертного заключения;
+- UI label, что результат является предварительным аналитическим материалом и не является управленческим решением.
 
 Не входит:
 
 - экспертная оценка;
-- export.
+- export;
+- DeepSeek/network/secrets scope;
+- прямой вызов LLM provider из Razor Page/PageModel;
+- защита evaluated/exported snapshots, потому что это scope Task 21.
+
+Границы:
+
+- UI/pages только передают данные в application service, а уже он обращается к `IAiAnalysisEngine`;
+- обычный UI smoke и автоматические тесты используют demo/mock provider и не требуют DeepSeek API key, user secrets или network access;
+- защита evaluated/exported snapshot не реализуется в Task 16 и остается в Task 21.
 
 Проверки:
 
 - service integration test;
-- UI smoke run analysis;
-- test stable impact item ids.
+- UI smoke run analysis на demo/mock provider без секретов и сети;
+- test stable impact item ids;
+- test no run without minimal input;
+- tests status mapping from `AiAnalysisResponse`;
+- tests failed/partial diagnostics display without expert assessment/conclusion.
 
 Done:
 
-- пользователь запускает анализ и видит структурированную карту влияния.
+- пользователь запускает анализ через review/details flow и видит структурированную карту влияния;
+- результат сохраняется в существующий `AiAnalysisResult` текущего анализа;
+- failed/partial результат сохраняет raw/error diagnostics;
+- UI явно показывает предварительный, неуправленческий характер результата;
+- Task 16 можно передать в реализацию без расширения scope до DeepSeek, сети, секретов и защиты evaluated/exported snapshots.
 
 ### Task 17. Экспертная оценка
 
