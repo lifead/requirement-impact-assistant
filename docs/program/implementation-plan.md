@@ -162,10 +162,11 @@ Done:
 
 Входит:
 
-- EF Core mapping;
-- первая миграция;
-- хранение анализов, контекста, результата интеллектуального анализа, карты влияния, экспертной оценки и заключения;
-- простой persistence test.
+- Task 4a. Подготовка EF migrations tooling;
+- Task 4b. EF mapping доменной модели;
+- Task 4c. Первая SQLite migration;
+- Task 4d. Простой persistence test;
+- хранение анализов, контекста, результата интеллектуального анализа, карты влияния, экспертной оценки и заключения.
 
 Не входит:
 
@@ -179,6 +180,70 @@ Done:
 - `dotnet test`;
 - применение миграции к чистой базе;
 - save/load test для анализа.
+
+Подзадачи:
+
+#### Task 4a. Подготовка EF migrations tooling
+
+Цель: подготовить design-time EF tooling для `ApplicationDbContext` без изменения доменной схемы MVP.
+
+Входит:
+
+- EF Design package;
+- design-time factory для `ApplicationDbContext`;
+- маленький тест, подтверждающий корректность design-time создания контекста.
+
+Не входит:
+
+- `DbSet`;
+- EF mapping доменной модели;
+- migration-файлы;
+- создание базы;
+- UI.
+
+#### Task 4b. EF mapping доменной модели
+
+Цель: описать `DbSet` и EF mapping доменных сущностей MVP для последующего сохранения в SQLite.
+
+Входит:
+
+- `DbSet` для доменных сущностей MVP;
+- EF mapping доменных сущностей и связей;
+- подготовка схемы хранения анализов, контекста, результата интеллектуального анализа, карты влияния, экспертной оценки и заключения.
+
+Не входит:
+
+- создание migration-файлов;
+- применение миграций;
+- UI.
+
+#### Task 4c. Первая SQLite migration
+
+Цель: создать первую SQLite migration и проверить ее применение к чистой базе.
+
+Входит:
+
+- создание первой SQLite migration для схемы MVP;
+- проверка применения migration к чистой базе;
+- явная фиксация блокера, если недоступен `dotnet-ef` или отдельно согласованный локальный tooling.
+
+Не входит:
+
+- обходной способ вместо согласованного tooling;
+- UI.
+
+#### Task 4d. Простой persistence test
+
+Цель: проверить, что минимальный связанный набор данных MVP сохраняется в SQLite и читается обратно.
+
+Входит:
+
+- простой persistence test на save/load минимального связанного набора данных MVP.
+
+Не входит:
+
+- UI;
+- LLM.
 
 Done:
 
@@ -696,25 +761,28 @@ Done:
 1. Task 1 - скелет solution.
 2. Task 2 - конфигурация и SQLite.
 3. Task 3 - доменная модель.
-4. Task 4 - persistence schema.
-5. Task 5 - список анализов.
-6. Task 6 - создание и редактирование анализа.
-7. Task 7 - состояние артефакта.
-8. Task 8 - ручной контекст.
-9. Task 9 - загрузка файлов.
-10. Task 10 - review входных данных.
-11. Task 11 - IAiAnalysisEngine contract и request assembly.
-12. Task 12 - DirectLlmAnalysisEngine и provider configuration.
-13. Task 13 - deterministic demo/mock provider.
-14. Task 14 - DeepSeek integration spike.
-15. Task 15 - validation и fallback.
-16. Task 16 - запуск анализа и карта влияния.
-17. Task 17 - экспертная оценка.
-18. Task 18 - экспертное заключение.
-19. Task 19 - Markdown export.
-20. Task 20 - JSON export.
-21. Task 21 - защита воспроизводимости.
-22. Task 22 - end-to-end smoke scenario.
+4. Task 4a - подготовка EF migrations tooling.
+5. Task 4b - EF mapping доменной модели.
+6. Task 4c - первая SQLite migration.
+7. Task 4d - простой persistence test.
+8. Task 5 - список анализов.
+9. Task 6 - создание и редактирование анализа.
+10. Task 7 - состояние артефакта.
+11. Task 8 - ручной контекст.
+12. Task 9 - загрузка файлов.
+13. Task 10 - review входных данных.
+14. Task 11 - IAiAnalysisEngine contract и request assembly.
+15. Task 12 - DirectLlmAnalysisEngine и provider configuration.
+16. Task 13 - deterministic demo/mock provider.
+17. Task 14 - DeepSeek integration spike.
+18. Task 15 - validation и fallback.
+19. Task 16 - запуск анализа и карта влияния.
+20. Task 17 - экспертная оценка.
+21. Task 18 - экспертное заключение.
+22. Task 19 - Markdown export.
+23. Task 20 - JSON export.
+24. Task 21 - защита воспроизводимости.
+25. Task 22 - end-to-end smoke scenario.
 
 ## Commit и review правила
 
