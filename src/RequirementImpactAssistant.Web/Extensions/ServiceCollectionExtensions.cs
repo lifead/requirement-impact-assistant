@@ -69,6 +69,7 @@ public static class ServiceCollectionExtensions
     public static IServiceCollection AddApplicationExport(this IServiceCollection services)
     {
         services.AddScoped<IAnalysisMarkdownExportService, AnalysisMarkdownExportService>();
+        services.AddScoped<IAnalysisJsonExportService, AnalysisJsonExportService>();
 
         return services;
     }

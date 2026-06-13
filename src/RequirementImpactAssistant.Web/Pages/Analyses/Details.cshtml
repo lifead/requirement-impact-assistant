@@ -39,6 +39,11 @@
                 @if (Model.Analysis.ExpertConclusion is not null)
                 {
                     <a class="btn btn-outline-secondary btn-sm"
+                       asp-page-handler="ExportJson"
+                       asp-route-id="@Model.Analysis.Id">
+                        Download JSON
+                    </a>
+                    <a class="btn btn-outline-secondary btn-sm"
                        asp-page-handler="ExportMarkdown"
                        asp-route-id="@Model.Analysis.Id">
                         Download Markdown

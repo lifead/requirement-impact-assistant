@@ -17,7 +17,8 @@ namespace RequirementImpactAssistant.Web.Pages.Analyses;
 public sealed class DetailsModel(
     ApplicationDbContext dbContext,
     IWebHostEnvironment? webHostEnvironment = null,
-    IAnalysisMarkdownExportService? markdownExportService = null) : PageModel
+    IAnalysisMarkdownExportService? markdownExportService = null,
+    IAnalysisJsonExportService? jsonExportService = null) : PageModel
 {
     private const long MaxUploadFileSizeBytes = 1_048_576;
 
@@ -62,6 +63,22 @@ public sealed class DetailsModel(
             _ => File(
                 Encoding.UTF8.GetBytes(result.Markdown),
                 AnalysisMarkdownExportService.ContentType,
+                result.FileName)
+        };
+    }
+
+    public async Task<IActionResult> OnGetExportJsonAsync(Guid id)
+    {
+        var exportService = jsonExportService ?? new AnalysisJsonExportService(dbContext);
+        var result = await exportService.ExportAsync(id, DateTimeOffset.UtcNow);
+
+        return result.Kind switch
+        {
+            AnalysisJsonExportResultKind.NotFound => NotFound(),
+            AnalysisJsonExportResultKind.Unavailable => BadRequest(result.Message),
+            _ => File(
+                Encoding.UTF8.GetBytes(result.Json),
+                AnalysisJsonExportService.ContentType,
                 result.FileName)
         };
     }
