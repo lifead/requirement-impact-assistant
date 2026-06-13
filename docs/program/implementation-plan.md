@@ -536,32 +536,48 @@ Done:
 
 Цель: реализовать первую версию `IAiAnalysisEngine` как `DirectLlmAnalysisEngine` и ввести общий provider boundary без привязки доменной логики к конкретному LLM-провайдеру.
 
+Зависимости: Task 11.
+
 Входит:
 
 - `DirectLlmAnalysisEngine`;
-- сбор prompt из проектного запроса и подготовленных материалов;
-- возврат карты влияния как результата для экспертной оценки и сохранения;
-- provider interface;
+- сбор prompt из provider-independent `AiAnalysisRequest`;
+- вызов нижнего provider boundary через интерфейс, например `ILlmProvider`;
+- provider-independent преобразование ответа provider в `AiAnalysisResponse`;
+- возврат `ImpactMap`, raw response, статуса и ошибок через существующий `AiAnalysisResponse`;
+- provider interface без зависимости от конкретного SDK;
+- request/response модели provider boundary, если они нужны для изоляции `DirectLlmAnalysisEngine`;
 - configuration model для выбора provider;
-- настройки для DeepSeek как планируемого первого real provider;
+- configuration section/options для DeepSeek как планируемого первого real provider;
 - правило хранения API key только во внешней конфигурации или user secrets;
 - отсутствие секретов в репозитории.
 
 Не входит:
 
 - реальный сетевой вызов;
+- concrete DeepSeek provider implementation;
 - deterministic demo/mock provider;
+- регистрация demo/mock provider;
+- JSON validation и fallback LLM-ответа;
+- UI запуска анализа;
+- сохранение `AiAnalysisResult`;
+- изменение статуса анализа;
 - streaming/chat UI.
 
 Проверки:
 
 - unit tests provider selection/configuration;
+- unit tests prompt содержит исходные поля анализа, контекст и boundary notice;
+- unit tests `DirectLlmAnalysisEngine` вызывает только `ILlmProvider`, а не внешний SDK;
+- unit tests provider response преобразуется в `AiAnalysisResponse`;
+- unit tests provider failure возвращает failed response без управленческого решения;
 - test, что секреты не требуются для сборки и не попадают в репозиторий;
 - `dotnet test`.
 
 Done:
 
 - приложение имеет `DirectLlmAnalysisEngine`, общий LLM provider boundary и конфигурационную точку для DeepSeek без зашивания провайдера в доменную модель, UI или бизнес-логику.
+- реальный DeepSeek-вызов и локальный demo/mock provider остаются отдельными последующими task.
 
 ### Task 13. Deterministic demo/mock provider
 
