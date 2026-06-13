@@ -1,0 +1,48 @@
+@page "/Analyses/{id:guid}"
+@model RequirementImpactAssistant.Web.Pages.Analyses.DetailsModel
+@{
+    ViewData["Title"] = Model.Analysis?.Title ?? "Analysis";
+}
+
+@if (Model.Analysis is not null)
+{
+    <section class="py-4">
+        <div class="mb-4">
+            <a asp-page="/Analyses/Index" class="link-secondary">Back to saved analyses</a>
+        </div>
+
+        <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
+            <div>
+                <h1 class="h2 mb-2">@Model.Analysis.Title</h1>
+                <p class="text-muted mb-0">Read-only analysis overview.</p>
+            </div>
+            <span class="badge text-bg-secondary">@Model.Analysis.Status</span>
+        </div>
+
+        <dl class="row">
+            <dt class="col-sm-3">Identifier</dt>
+            <dd class="col-sm-9"><code>@Model.Analysis.Id</code></dd>
+
+            <dt class="col-sm-3">Created</dt>
+            <dd class="col-sm-9">@Model.Analysis.CreatedAt.ToLocalTime().ToString("g")</dd>
+
+            <dt class="col-sm-3">Updated</dt>
+            <dd class="col-sm-9">@Model.Analysis.UpdatedAt.ToLocalTime().ToString("g")</dd>
+
+            <dt class="col-sm-3">Fixed</dt>
+            <dd class="col-sm-9">@(Model.Analysis.FixedAt?.ToLocalTime().ToString("g") ?? "Not fixed")</dd>
+
+            <dt class="col-sm-3">Change source</dt>
+            <dd class="col-sm-9">@Model.Analysis.ChangeSource</dd>
+
+            <dt class="col-sm-3">Original description</dt>
+            <dd class="col-sm-9">@Model.Analysis.OriginalDescription</dd>
+
+            <dt class="col-sm-3">Project request</dt>
+            <dd class="col-sm-9">@Model.Analysis.ProjectRequest</dd>
+
+            <dt class="col-sm-3">Situation description</dt>
+            <dd class="col-sm-9">@Model.Analysis.SituationDescription</dd>
+        </dl>
+    </section>
+}
