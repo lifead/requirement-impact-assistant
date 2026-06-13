@@ -34,12 +34,7 @@ public sealed class DirectLlmAnalysisEngine : IAiAnalysisEngine
                 .CompleteAsync(providerRequest, cancellationToken)
                 .ConfigureAwait(false);
 
-            return new AiAnalysisResponse(
-                Status: MapStatus(providerResponse.Status),
-                ImpactMap: providerResponse.ImpactMap,
-                RawResponse: providerResponse.RawResponse,
-                Errors: providerResponse.Errors,
-                BoundaryNotice: request.BoundaryNotice);
+            return AiAnalysisResponseValidator.Validate(providerResponse, request.BoundaryNotice);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -85,12 +80,4 @@ public sealed class DirectLlmAnalysisEngine : IAiAnalysisEngine
         return prompt.ToString();
     }
 
-    private static AiAnalysisResponseStatus MapStatus(LlmProviderResponseStatus status) =>
-        status switch
-        {
-            LlmProviderResponseStatus.Succeeded => AiAnalysisResponseStatus.Succeeded,
-            LlmProviderResponseStatus.Partial => AiAnalysisResponseStatus.Partial,
-            LlmProviderResponseStatus.Failed => AiAnalysisResponseStatus.Failed,
-            _ => AiAnalysisResponseStatus.Failed
-        };
 }

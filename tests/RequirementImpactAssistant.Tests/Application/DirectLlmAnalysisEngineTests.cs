@@ -3,6 +3,7 @@ using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Domain.Impact;
 using System.Net.Http;
+using System.Reflection;
 
 namespace RequirementImpactAssistant.Tests.Application;
 
@@ -63,6 +64,124 @@ public sealed class DirectLlmAnalysisEngineTests
         Assert.Equal("raw partial response", response.RawResponse);
         Assert.Equal(["missing optional organizational context"], response.Errors);
         Assert.True(response.BoundaryNotice.AiDoesNotMakeManagementDecision);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_ValidResponsePassesAndPreservesRawResponse()
+    {
+        var impactMap = new ImpactMap
+        {
+            ChangeSummary =
+            {
+                Title = "Potential migration impact"
+            },
+            PreliminaryAssessment =
+            {
+                Title = "Requires expert review"
+            }
+        };
+        var provider = new CapturingLlmProvider(new LlmProviderResponse(
+            LlmProviderResponseStatus.Succeeded,
+            impactMap,
+            "{\"impactMap\":\"valid diagnostic payload\"}",
+            []));
+        var engine = CreateEngine(provider);
+
+        var response = await engine.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(AiAnalysisResponseStatus.Succeeded, response.Status);
+        Assert.Same(impactMap, response.ImpactMap);
+        Assert.Equal("{\"impactMap\":\"valid diagnostic payload\"}", response.RawResponse);
+        Assert.Empty(response.Errors);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_MissingImpactMapFailsAndPreservesRawDiagnostic()
+    {
+        var provider = new CapturingLlmProvider(new LlmProviderResponse(
+            LlmProviderResponseStatus.Succeeded,
+            null,
+            "malformed or raw-only provider response",
+            []));
+        var engine = CreateEngine(provider);
+
+        var response = await engine.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(AiAnalysisResponseStatus.Failed, response.Status);
+        Assert.Null(response.ImpactMap);
+        Assert.Equal("malformed or raw-only provider response", response.RawResponse);
+        Assert.Contains("impact map is missing", response.Errors[0]);
+        Assert.True(response.BoundaryNotice.AiDoesNotMakeManagementDecision);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_MissingChangeSummaryFailsAndPreservesRawDiagnostic()
+    {
+        var impactMap = new ImpactMap
+        {
+            ChangeSummary = null!
+        };
+        var provider = new CapturingLlmProvider(new LlmProviderResponse(
+            LlmProviderResponseStatus.Succeeded,
+            impactMap,
+            "{\"impactMap\":{\"preliminaryAssessment\":{}}}",
+            []));
+        var engine = CreateEngine(provider);
+
+        var response = await engine.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(AiAnalysisResponseStatus.Failed, response.Status);
+        Assert.Null(response.ImpactMap);
+        Assert.Equal("{\"impactMap\":{\"preliminaryAssessment\":{}}}", response.RawResponse);
+        Assert.Contains(response.Errors, error => error.Contains("changeSummary", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_MissingPreliminaryAssessmentFailsAndPreservesRawDiagnostic()
+    {
+        var impactMap = new ImpactMap
+        {
+            PreliminaryAssessment = null!
+        };
+        var provider = new CapturingLlmProvider(new LlmProviderResponse(
+            LlmProviderResponseStatus.Succeeded,
+            impactMap,
+            "{\"impactMap\":{\"changeSummary\":{}}}",
+            []));
+        var engine = CreateEngine(provider);
+
+        var response = await engine.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(AiAnalysisResponseStatus.Failed, response.Status);
+        Assert.Null(response.ImpactMap);
+        Assert.Equal("{\"impactMap\":{\"changeSummary\":{}}}", response.RawResponse);
+        Assert.Contains(response.Errors, error => error.Contains("preliminaryAssessment", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_NonCriticalValidationIssueReturnsPartialWithValidationErrors()
+    {
+        var impactMap = new ImpactMap();
+        var risk = impactMap.AddRisk();
+        SetPrivateProperty(risk, nameof(ImpactMapItem.Id), "unstable-risk-id");
+
+        var provider = new CapturingLlmProvider(new LlmProviderResponse(
+            LlmProviderResponseStatus.Succeeded,
+            impactMap,
+            "{\"impactMap\":\"contains non-critical collection issue\"}",
+            []));
+        var engine = CreateEngine(provider);
+
+        var response = await engine.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(AiAnalysisResponseStatus.Partial, response.Status);
+        Assert.Same(impactMap, response.ImpactMap);
+        Assert.Equal("{\"impactMap\":\"contains non-critical collection issue\"}", response.RawResponse);
+        Assert.Contains(
+            response.Errors,
+            error =>
+                error.Contains("non-critical validation issue", StringComparison.OrdinalIgnoreCase)
+                && error.Contains("risks", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -153,6 +272,19 @@ public sealed class DirectLlmAnalysisEngineTests
                 "{\"analysisId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\",\"analysis\":{\"title\":\"Gateway migration\",\"originalDescription\":\"Original requirement\",\"projectRequest\":\"Project request\",\"situationDescription\":\"Current situation\",\"changeSource\":\"Change source\"},\"contextFragments\":[{\"id\":\"11111111-1111-1111-1111-111111111111\",\"type\":\"Task\",\"source\":\"Task tracker\",\"text\":\"Task context\",\"fileName\":null}]}",
             ExpectedResult: ExpectedAnalysisResultStructure.Default,
             BoundaryNotice: AnalysisBoundaryNotice.Default);
+    }
+
+    private static void SetPrivateProperty<TValue>(
+        ImpactMapItem item,
+        string propertyName,
+        TValue value)
+    {
+        var property = typeof(ImpactMapItem).GetProperty(
+            propertyName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+        Assert.NotNull(property);
+        property.SetValue(item, value);
     }
 
     private sealed class CapturingLlmProvider(LlmProviderResponse response) : ILlmProvider
