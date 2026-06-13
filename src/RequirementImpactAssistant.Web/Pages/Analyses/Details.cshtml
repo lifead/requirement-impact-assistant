@@ -91,6 +91,35 @@
             </div>
         </form>
 
+        <form method="post"
+              enctype="multipart/form-data"
+              asp-page-handler="UploadContextFragment"
+              asp-route-id="@Model.Analysis.Id"
+              class="d-grid gap-3 mb-4">
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label asp-for="UploadContextFragmentInput.Type" class="form-label">Uploaded file type</label>
+                    <select asp-for="UploadContextFragmentInput.Type"
+                            asp-items="Html.GetEnumSelectList<ContextFragmentType>()"
+                            class="form-select"></select>
+                </div>
+                <div class="col-md-8">
+                    <label asp-for="UploadContextFragmentInput.Source" class="form-label">Uploaded file source</label>
+                    <input asp-for="UploadContextFragmentInput.Source" class="form-control" />
+                </div>
+            </div>
+
+            <div>
+                <label asp-for="UploadContextFragmentInput.File" class="form-label">Markdown, TXT, or JSON file</label>
+                <input asp-for="UploadContextFragmentInput.File" class="form-control" type="file" accept=".md,.txt,.json" />
+                <span asp-validation-for="UploadContextFragmentInput.File" class="text-danger"></span>
+            </div>
+
+            <div>
+                <button type="submit" class="btn btn-outline-primary">Upload file</button>
+            </div>
+        </form>
+
         @if (Model.Analysis.ContextFragments.Count == 0)
         {
             <p class="text-muted mb-0">No context fragments yet.</p>
@@ -103,6 +132,7 @@
                         <tr>
                             <th scope="col">Type</th>
                             <th scope="col">Source</th>
+                            <th scope="col">File</th>
                             <th scope="col">Text</th>
                             <th scope="col">Created</th>
                             <th scope="col" class="text-end">Actions</th>
@@ -114,6 +144,7 @@
                             <tr>
                                 <td>@fragment.Type</td>
                                 <td>@fragment.Source</td>
+                                <td>@(fragment.FileName ?? "-")</td>
                                 <td class="text-break">@fragment.Text</td>
                                 <td>@fragment.CreatedAt.ToLocalTime().ToString("g")</td>
                                 <td class="text-end">

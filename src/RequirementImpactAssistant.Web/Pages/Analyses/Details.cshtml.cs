@@ -1,4 +1,6 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -9,12 +11,26 @@ using RequirementImpactAssistant.Web.Domain.Enums;
 
 namespace RequirementImpactAssistant.Web.Pages.Analyses;
 
-public sealed class DetailsModel(ApplicationDbContext dbContext) : PageModel
+public sealed class DetailsModel(ApplicationDbContext dbContext, IWebHostEnvironment? webHostEnvironment = null) : PageModel
 {
+    private const long MaxUploadFileSizeBytes = 1_048_576;
+
+    private static readonly HashSet<string> AllowedUploadExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".json",
+        ".md",
+        ".txt"
+    };
+
     [BindProperty]
     public ManualContextFragmentInput ContextFragmentInput { get; set; } = new();
 
+    [BindProperty]
+    public FileContextFragmentInput UploadContextFragmentInput { get; set; } = new();
+
     public AnalysisDetails? Analysis { get; private set; }
+
+    public Action<string> DeleteStoredUploadFile { get; set; } = System.IO.File.Delete;
 
     public async Task<IActionResult> OnGetAsync(Guid id)
     {
@@ -50,6 +66,66 @@ public sealed class DetailsModel(ApplicationDbContext dbContext) : PageModel
         return RedirectToPage("/Analyses/Details", new { id = analysis.Id });
     }
 
+    public async Task<IActionResult> OnPostUploadContextFragmentAsync(Guid id)
+    {
+        var analysis = await dbContext.Analyses
+            .SingleOrDefaultAsync(candidate => candidate.Id == id);
+
+        if (analysis is null)
+        {
+            return NotFound();
+        }
+
+        ClearManualContextFragmentValidation();
+
+        if (!UploadContextFragmentInput.Validate(ModelState))
+        {
+            Analysis = await LoadAnalysisDetailsAsync(id);
+            return Page();
+        }
+
+        var uploadedFile = UploadContextFragmentInput.File!;
+        var originalFileName = SanitizeOriginalFileName(uploadedFile.FileName);
+        var extension = Path.GetExtension(originalFileName);
+        var storedFileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}";
+        var relativePath = BuildUploadRelativePath(analysis.Id, storedFileName);
+        var absolutePath = ToAbsoluteUploadPath(relativePath);
+        var now = DateTimeOffset.UtcNow;
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
+
+            await using (var output = new FileStream(absolutePath, FileMode.CreateNew, FileAccess.Write))
+            {
+                await uploadedFile.CopyToAsync(output);
+            }
+
+            var text = await System.IO.File.ReadAllTextAsync(absolutePath);
+
+            dbContext.ContextFragments.Add(new ContextFragment
+            {
+                AnalysisId = analysis.Id,
+                Type = UploadContextFragmentInput.Type,
+                Source = UploadContextFragmentInput.GetSource(originalFileName),
+                Text = text,
+                FileName = originalFileName,
+                FilePath = relativePath,
+                CreatedAt = now
+            });
+            analysis.UpdatedAt = now;
+
+            await dbContext.SaveChangesAsync();
+        }
+        catch
+        {
+            DeleteStoredFileBestEffort(relativePath, analysis.Id);
+            throw;
+        }
+
+        return RedirectToPage("/Analyses/Details", new { id = analysis.Id });
+    }
+
     public async Task<IActionResult> OnPostDeleteContextFragmentAsync(Guid id, Guid fragmentId)
     {
         var fragment = await dbContext.ContextFragments
@@ -68,9 +144,10 @@ public sealed class DetailsModel(ApplicationDbContext dbContext) : PageModel
             return NotFound();
         }
 
+        DeleteStoredFileIfPresent(fragment.FilePath, analysis.Id);
+
         dbContext.ContextFragments.Remove(fragment);
         analysis.UpdatedAt = DateTimeOffset.UtcNow;
-
         await dbContext.SaveChangesAsync();
 
         return RedirectToPage("/Analyses/Details", new { id = analysis.Id });
@@ -95,6 +172,8 @@ public sealed class DetailsModel(ApplicationDbContext dbContext) : PageModel
                     fragment.Type,
                     fragment.Source,
                     fragment.Text,
+                    fragment.FileName,
+                    fragment.FilePath,
                     fragment.CreatedAt))
                 .ToList());
 
@@ -128,6 +207,8 @@ public sealed class DetailsModel(ApplicationDbContext dbContext) : PageModel
         ContextFragmentType Type,
         string Source,
         string Text,
+        string? FileName,
+        string? FilePath,
         DateTimeOffset CreatedAt);
 
     public sealed class ManualContextFragmentInput
@@ -169,5 +250,113 @@ public sealed class DetailsModel(ApplicationDbContext dbContext) : PageModel
                 modelState.AddModelError($"{nameof(DetailsModel.ContextFragmentInput)}.{propertyName}", errorMessage);
             }
         }
+    }
+
+    public sealed class FileContextFragmentInput
+    {
+        public ContextFragmentType Type { get; set; } = ContextFragmentType.Other;
+
+        public string? Source { get; set; }
+
+        public IFormFile? File { get; set; }
+
+        public bool Validate(ModelStateDictionary modelState)
+        {
+            if (File is null || File.Length == 0)
+            {
+                modelState.AddModelError($"{nameof(DetailsModel.UploadContextFragmentInput)}.{nameof(File)}", "File is required.");
+                return false;
+            }
+
+            if (File.Length > MaxUploadFileSizeBytes)
+            {
+                modelState.AddModelError(
+                    $"{nameof(DetailsModel.UploadContextFragmentInput)}.{nameof(File)}",
+                    "File size must be 1 MB or less.");
+            }
+
+            var extension = Path.GetExtension(SanitizeOriginalFileName(File.FileName));
+            if (!AllowedUploadExtensions.Contains(extension))
+            {
+                modelState.AddModelError(
+                    $"{nameof(DetailsModel.UploadContextFragmentInput)}.{nameof(File)}",
+                    "Only Markdown, TXT, and JSON files are supported.");
+            }
+
+            return modelState.IsValid;
+        }
+
+        public string GetSource(string fileName) =>
+            string.IsNullOrWhiteSpace(Source)
+                ? fileName
+                : Source.Trim();
+    }
+
+    private static string BuildUploadRelativePath(Guid analysisId, string storedFileName) =>
+        $"data/uploads/{analysisId}/{storedFileName}";
+
+    private static string SanitizeOriginalFileName(string fileName)
+    {
+        var normalized = fileName.Replace('\\', '/');
+        var lastSegment = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
+
+        return Path.GetFileName(lastSegment ?? string.Empty);
+    }
+
+    private string ToAbsoluteUploadPath(string relativePath) =>
+        Path.GetFullPath(Path.Combine(GetContentRootPath(), relativePath));
+
+    private string GetAnalysisUploadsRootPath(Guid analysisId) =>
+        Path.GetFullPath(Path.Combine(GetContentRootPath(), "data", "uploads", analysisId.ToString()));
+
+    private string GetContentRootPath() =>
+        webHostEnvironment?.ContentRootPath ?? Directory.GetCurrentDirectory();
+
+    private void DeleteStoredFileIfPresent(string? relativePath, Guid analysisId)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            return;
+        }
+
+        var uploadsRoot = EnsureTrailingDirectorySeparator(GetAnalysisUploadsRootPath(analysisId));
+        var fullPath = ToAbsoluteUploadPath(relativePath);
+        if (!fullPath.StartsWith(uploadsRoot, GetPathComparison()))
+        {
+            return;
+        }
+
+        if (System.IO.File.Exists(fullPath))
+        {
+            DeleteStoredUploadFile(fullPath);
+        }
+    }
+
+    private void DeleteStoredFileBestEffort(string relativePath, Guid analysisId)
+    {
+        try
+        {
+            DeleteStoredFileIfPresent(relativePath, analysisId);
+        }
+        catch
+        {
+            // Preserve the original upload or database failure for the caller.
+        }
+    }
+
+    private static string EnsureTrailingDirectorySeparator(string path) =>
+        path.EndsWith(Path.DirectorySeparatorChar)
+            ? path
+            : $"{path}{Path.DirectorySeparatorChar}";
+
+    private static StringComparison GetPathComparison() =>
+        OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+
+    private void ClearManualContextFragmentValidation()
+    {
+        ModelState.Remove($"{nameof(ContextFragmentInput)}.{nameof(ManualContextFragmentInput.Source)}");
+        ModelState.Remove($"{nameof(ContextFragmentInput)}.{nameof(ManualContextFragmentInput.Text)}");
     }
 }
