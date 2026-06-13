@@ -1,5 +1,6 @@
 @page "/Analyses/{id:guid}"
 @model RequirementImpactAssistant.Web.Pages.Analyses.DetailsModel
+@using RequirementImpactAssistant.Web.Domain.Enums
 @{
     ViewData["Title"] = Model.Analysis?.Title ?? "Analysis";
 }
@@ -14,7 +15,7 @@
         <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
             <div>
                 <h1 class="h2 mb-2">@Model.Analysis.Title</h1>
-                <p class="text-muted mb-0">Read-only analysis overview.</p>
+                <p class="text-muted mb-0">Saved analysis overview.</p>
             </div>
             <div class="d-flex align-items-center gap-2">
                 <span class="badge text-bg-secondary">@Model.Analysis.Status</span>
@@ -51,5 +52,84 @@
             <dt class="col-sm-3">Situation description</dt>
             <dd class="col-sm-9">@Model.Analysis.SituationDescription</dd>
         </dl>
+    </section>
+
+    <section class="py-4 border-top">
+        <div class="mb-4">
+            <h2 class="h4 mb-2">Context fragments</h2>
+            <p class="text-muted mb-0">Manual context attached to this saved analysis.</p>
+        </div>
+
+        <form method="post"
+              asp-page-handler="AddContextFragment"
+              asp-route-id="@Model.Analysis.Id"
+              class="d-grid gap-3 mb-4">
+            <div asp-validation-summary="ModelOnly" class="text-danger"></div>
+
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label asp-for="ContextFragmentInput.Type" class="form-label">Type</label>
+                    <select asp-for="ContextFragmentInput.Type"
+                            asp-items="Html.GetEnumSelectList<ContextFragmentType>()"
+                            class="form-select"></select>
+                </div>
+                <div class="col-md-8">
+                    <label asp-for="ContextFragmentInput.Source" class="form-label">Source</label>
+                    <input asp-for="ContextFragmentInput.Source" class="form-control" />
+                    <span asp-validation-for="ContextFragmentInput.Source" class="text-danger"></span>
+                </div>
+            </div>
+
+            <div>
+                <label asp-for="ContextFragmentInput.Text" class="form-label">Text</label>
+                <textarea asp-for="ContextFragmentInput.Text" class="form-control" rows="5"></textarea>
+                <span asp-validation-for="ContextFragmentInput.Text" class="text-danger"></span>
+            </div>
+
+            <div>
+                <button type="submit" class="btn btn-primary">Add fragment</button>
+            </div>
+        </form>
+
+        @if (Model.Analysis.ContextFragments.Count == 0)
+        {
+            <p class="text-muted mb-0">No context fragments yet.</p>
+        }
+        else
+        {
+            <div class="table-responsive">
+                <table class="table align-middle">
+                    <thead>
+                        <tr>
+                            <th scope="col">Type</th>
+                            <th scope="col">Source</th>
+                            <th scope="col">Text</th>
+                            <th scope="col">Created</th>
+                            <th scope="col" class="text-end">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var fragment in Model.Analysis.ContextFragments)
+                        {
+                            <tr>
+                                <td>@fragment.Type</td>
+                                <td>@fragment.Source</td>
+                                <td class="text-break">@fragment.Text</td>
+                                <td>@fragment.CreatedAt.ToLocalTime().ToString("g")</td>
+                                <td class="text-end">
+                                    <form method="post"
+                                          asp-page-handler="DeleteContextFragment"
+                                          asp-route-id="@Model.Analysis.Id"
+                                          asp-route-fragmentId="@fragment.Id"
+                                          class="d-inline">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
     </section>
 }

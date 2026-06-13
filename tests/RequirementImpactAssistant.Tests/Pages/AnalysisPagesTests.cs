@@ -107,6 +107,294 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
+    public async Task DetailsPage_ListsContextFragmentsForCurrentAnalysis()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.ReadyForAnalysis,
+                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
+            var otherAnalysis = CreateAnalysis(
+                "Other request",
+                AnalysisStatus.ReadyForAnalysis,
+                new DateTimeOffset(2024, 01, 01, 09, 00, 00, TimeSpan.Zero));
+            analysis.ContextFragments.Add(CreateContextFragment(
+                analysis.Id,
+                ContextFragmentType.Task,
+                "Task tracker",
+                "Earlier task context.",
+                new DateTimeOffset(2024, 01, 01, 10, 00, 00, TimeSpan.Zero)));
+            analysis.ContextFragments.Add(CreateContextFragment(
+                analysis.Id,
+                ContextFragmentType.ApiDescription,
+                "API notes",
+                "Latest API context.",
+                new DateTimeOffset(2024, 01, 01, 11, 00, 00, TimeSpan.Zero)));
+            otherAnalysis.ContextFragments.Add(CreateContextFragment(
+                otherAnalysis.Id,
+                ContextFragmentType.Comment,
+                "Other source",
+                "Foreign context.",
+                new DateTimeOffset(2024, 01, 01, 12, 00, 00, TimeSpan.Zero)));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.AddRange(analysis, otherAnalysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                Assert.Collection(
+                    pageModel.Analysis.ContextFragments,
+                    item =>
+                    {
+                        Assert.Equal(ContextFragmentType.ApiDescription, item.Type);
+                        Assert.Equal("API notes", item.Source);
+                        Assert.Equal("Latest API context.", item.Text);
+                    },
+                    item =>
+                    {
+                        Assert.Equal(ContextFragmentType.Task, item.Type);
+                        Assert.Equal("Task tracker", item.Source);
+                        Assert.Equal("Earlier task context.", item.Text);
+                    });
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_AddsManualContextFragmentAndUpdatesAnalysisWithoutChangingStatus()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var originalUpdatedAt = new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero);
+            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.InputIncomplete, originalUpdatedAt);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext)
+                {
+                    ContextFragmentInput = new DetailsModel.ManualContextFragmentInput
+                    {
+                        Type = ContextFragmentType.ArchitecturalConstraint,
+                        Source = "  Architecture note  ",
+                        Text = "  Keep the gateway contract backward compatible.  "
+                    }
+                };
+
+                var result = await pageModel.OnPostAddContextFragmentAsync(analysis.Id);
+                var redirect = Assert.IsType<RedirectToPageResult>(result);
+
+                Assert.Equal("/Analyses/Details", redirect.PageName);
+                Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var updated = await dbContext.Analyses
+                    .Include(candidate => candidate.ContextFragments)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+                var fragment = Assert.Single(updated.ContextFragments);
+
+                Assert.Equal(ContextFragmentType.ArchitecturalConstraint, fragment.Type);
+                Assert.Equal("Architecture note", fragment.Source);
+                Assert.Equal("Keep the gateway contract backward compatible.", fragment.Text);
+                Assert.Null(fragment.FileName);
+                Assert.Null(fragment.FilePath);
+                Assert.NotEqual(default, fragment.CreatedAt);
+                Assert.True(updated.UpdatedAt > originalUpdatedAt);
+                Assert.Equal(AnalysisStatus.InputIncomplete, updated.Status);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_ReturnsValidationErrorsForMissingManualContextInput()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var originalUpdatedAt = new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero);
+            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.ReadyForAnalysis, originalUpdatedAt);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnPostAddContextFragmentAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.False(pageModel.ModelState.IsValid);
+                Assert.Equal(2, pageModel.ModelState.ErrorCount);
+                Assert.NotNull(pageModel.Analysis);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var unchanged = await dbContext.Analyses
+                    .Include(candidate => candidate.ContextFragments)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(originalUpdatedAt, unchanged.UpdatedAt);
+                Assert.Empty(unchanged.ContextFragments);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_DeletesManualContextFragmentAndUpdatesAnalysisWithoutChangingStatus()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var originalUpdatedAt = new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero);
+            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.NeedsExpertEvaluation, originalUpdatedAt);
+            var fragment = CreateContextFragment(
+                analysis.Id,
+                ContextFragmentType.TestCase,
+                "Regression suite",
+                "Gateway regression case.",
+                new DateTimeOffset(2024, 01, 01, 09, 00, 00, TimeSpan.Zero));
+            analysis.ContextFragments.Add(fragment);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnPostDeleteContextFragmentAsync(analysis.Id, fragment.Id);
+                var redirect = Assert.IsType<RedirectToPageResult>(result);
+
+                Assert.Equal("/Analyses/Details", redirect.PageName);
+                Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var updated = await dbContext.Analyses
+                    .Include(candidate => candidate.ContextFragments)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Empty(updated.ContextFragments);
+                Assert.True(updated.UpdatedAt > originalUpdatedAt);
+                Assert.Equal(AnalysisStatus.NeedsExpertEvaluation, updated.Status);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_DoesNotDeleteContextFragmentFromAnotherAnalysis()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var firstUpdatedAt = new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero);
+            var secondUpdatedAt = new DateTimeOffset(2024, 01, 01, 09, 00, 00, TimeSpan.Zero);
+            var firstAnalysis = CreateAnalysis("Gateway migration", AnalysisStatus.ReadyForAnalysis, firstUpdatedAt);
+            var secondAnalysis = CreateAnalysis("Billing migration", AnalysisStatus.ReadyForAnalysis, secondUpdatedAt);
+            var foreignFragment = CreateContextFragment(
+                secondAnalysis.Id,
+                ContextFragmentType.PreviousDecision,
+                "Decision log",
+                "Billing decision context.",
+                new DateTimeOffset(2024, 01, 01, 10, 00, 00, TimeSpan.Zero));
+            secondAnalysis.ContextFragments.Add(foreignFragment);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.AddRange(firstAnalysis, secondAnalysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnPostDeleteContextFragmentAsync(firstAnalysis.Id, foreignFragment.Id);
+
+                Assert.IsType<NotFoundResult>(result);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var unchangedFirst = await dbContext.Analyses
+                    .Include(candidate => candidate.ContextFragments)
+                    .SingleAsync(candidate => candidate.Id == firstAnalysis.Id);
+                var unchangedSecond = await dbContext.Analyses
+                    .Include(candidate => candidate.ContextFragments)
+                    .SingleAsync(candidate => candidate.Id == secondAnalysis.Id);
+
+                Assert.Equal(firstUpdatedAt, unchangedFirst.UpdatedAt);
+                Assert.Empty(unchangedFirst.ContextFragments);
+                Assert.Equal(secondUpdatedAt, unchangedSecond.UpdatedAt);
+                Assert.Equal(foreignFragment.Id, Assert.Single(unchangedSecond.ContextFragments).Id);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task CreatePage_CreatesAnalysisAndRedirectsToReadOnlyDetails()
     {
         var databasePath = CreateDatabasePath();
@@ -379,6 +667,22 @@ public sealed class AnalysisPagesTests
             ProjectRequest = $"Project request for {title}",
             SituationDescription = $"Situation for {title}",
             ChangeSource = $"Change source for {title}"
+        };
+
+    private static ContextFragment CreateContextFragment(
+        Guid analysisId,
+        ContextFragmentType type,
+        string source,
+        string text,
+        DateTimeOffset createdAt) =>
+        new()
+        {
+            Id = Guid.NewGuid(),
+            AnalysisId = analysisId,
+            Type = type,
+            Source = source,
+            Text = text,
+            CreatedAt = createdAt
         };
 
     private static void DeleteDatabase(string databasePath)
