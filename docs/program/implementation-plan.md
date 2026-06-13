@@ -989,18 +989,39 @@ Done:
 Входит:
 
 - правило запрета незаметной перезаписи результата после экспертной фиксации или экспорта;
+- момент блокировки повторного анализа:
+  - после сохранения `ExpertEvaluation`;
+  - после сохранения `ExpertConclusion`;
+  - после успешного Markdown/JSON export, если факт экспорта фиксируется отдельным минимальным маркером;
 - clear message при попытке повторного анализа;
-- сохранение текущего evaluated/exported snapshot.
+- сохранение текущего evaluated/exported snapshot как минимальная защита уже сохраненного `AiAnalysisResult` от перезаписи, без полноценной истории запусков, новой audit-системы или архива всех LLM responses;
+- минимальный маркер факта экспорта, если он нужен для защиты результата.
 
 Не входит:
 
 - полноценная история всех LLM-запусков;
-- аудит экспериментов.
+- audit log или аудит экспериментов;
+- архив всех LLM responses;
+- изменения форматов Markdown/JSON;
+- расширение Markdown/JSON export-функциональности;
+- новая workflow-система.
+
+Границы:
+
+- до сохранения `ExpertEvaluation` повторный запуск разрешен и может перезаписать текущий `AiAnalysisResult`;
+- после сохранения `ExpertEvaluation`, `ExpertConclusion` или зафиксированного успешного экспорта сервис не вызывает `IAiAnalysisEngine`, не меняет `AiAnalysisResult` и возвращает понятное сообщение;
+- Task 21 не меняет формат Markdown/JSON и не расширяет export-функциональность из Task 19/20;
+- Task 21 может добавить только минимальный маркер факта экспорта, если он нужен для защиты уже сохраненного результата;
+- Task 21 должна быть реализуема и проверяема без DeepSeek API key, user secrets и network access.
 
 Проверки:
 
 - tests rerun before expert fixation;
-- tests rerun after expert fixation/export.
+- tests rerun after expert fixation/export;
+- test blocked rerun does not call `IAiAnalysisEngine`;
+- test existing `AiAnalysisResult` remains unchanged after blocked rerun;
+- test rerun before `ExpertEvaluation` is still allowed and may update current `AiAnalysisResult`;
+- test protection does not require DeepSeek API key, user secrets or network access.
 
 Done:
 
