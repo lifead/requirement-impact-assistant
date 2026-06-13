@@ -32,6 +32,11 @@
             </div>
         </div>
 
+        @if (!string.IsNullOrWhiteSpace(Model.AnalysisRunMessage))
+        {
+            <div class="alert alert-info" role="status">@Model.AnalysisRunMessage</div>
+        }
+
         <dl class="row">
             <dt class="col-sm-3">Identifier</dt>
             <dd class="col-sm-9"><code>@Model.Analysis.Id</code></dd>
@@ -57,6 +62,115 @@
             <dt class="col-sm-3">Situation description</dt>
             <dd class="col-sm-9">@Model.Analysis.SituationDescription</dd>
         </dl>
+    </section>
+
+    <section class="py-4 border-top">
+        <div class="mb-4">
+            <h2 class="h4 mb-2">Preliminary AI analysis result</h2>
+            <p class="text-muted mb-0">This material is preliminary analytical input for human expert review and is not a management decision.</p>
+        </div>
+
+        @if (Model.Analysis.AiAnalysisResult is null)
+        {
+            <div class="border rounded p-4 bg-light">
+                <p class="mb-0">No preliminary analysis result has been generated yet.</p>
+            </div>
+        }
+        else
+        {
+            var aiResult = Model.Analysis.AiAnalysisResult;
+
+            <dl class="row">
+                <dt class="col-sm-3">Result status</dt>
+                <dd class="col-sm-9">@aiResult.Status</dd>
+
+                <dt class="col-sm-3">Generated</dt>
+                <dd class="col-sm-9">@(aiResult.GeneratedAt?.ToLocalTime().ToString("g") ?? "Not generated")</dd>
+
+                <dt class="col-sm-3">Engine</dt>
+                <dd class="col-sm-9">@aiResult.EngineName</dd>
+
+                <dt class="col-sm-3">Provider</dt>
+                <dd class="col-sm-9">@aiResult.ProviderName</dd>
+
+                <dt class="col-sm-3">Model</dt>
+                <dd class="col-sm-9">@aiResult.ModelName</dd>
+
+                <dt class="col-sm-3">Prompt version</dt>
+                <dd class="col-sm-9">@aiResult.PromptVersion</dd>
+            </dl>
+
+            @if (aiResult.ImpactMap is null)
+            {
+                <div class="alert alert-warning" role="status">
+                    No structured impact map was saved for this result. Review diagnostics and raw response below.
+                </div>
+            }
+            else
+            {
+                <div class="d-grid gap-4">
+                    @foreach (var impactSection in aiResult.ImpactSections)
+                    {
+                        <section>
+                            <h3 class="h5 mb-3">@impactSection.Title</h3>
+
+                            @if (impactSection.Items.Count == 0)
+                            {
+                                <p class="text-muted mb-0">No items.</p>
+                            }
+                            else
+                            {
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Item id</th>
+                                                <th scope="col">Type</th>
+                                                <th scope="col">Severity</th>
+                                                <th scope="col">Title</th>
+                                                <th scope="col">Description</th>
+                                                <th scope="col">Notes</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var item in impactSection.Items)
+                                            {
+                                                <tr>
+                                                    <td><code>@item.Id</code></td>
+                                                    <td>@item.ItemType</td>
+                                                    <td>@item.Severity</td>
+                                                    <td>@item.Title</td>
+                                                    <td class="text-break">@item.Description</td>
+                                                    <td class="text-break">@item.Notes</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </section>
+                    }
+                </div>
+            }
+
+            @if (!string.IsNullOrWhiteSpace(aiResult.ErrorMessage))
+            {
+                <div class="mt-4">
+                    <h3 class="h5">Diagnostics</h3>
+                    <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.ErrorMessage</pre>
+                </div>
+            }
+
+            <div class="mt-4">
+                <h3 class="h5">Raw response</h3>
+                <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.RawResponse</pre>
+            </div>
+
+            <div class="mt-4">
+                <h3 class="h5">Input snapshot</h3>
+                <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.InputSnapshot</pre>
+            </div>
+        }
     </section>
 
     <section class="py-4 border-top">

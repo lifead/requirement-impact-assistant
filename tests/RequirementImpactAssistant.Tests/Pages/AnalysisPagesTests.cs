@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
+using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
@@ -383,6 +384,99 @@ public sealed class AnalysisPagesTests
                 Assert.Equal("Decision log", unchangedFragment.Source);
                 Assert.Equal("Approved previous decision.", unchangedFragment.Text);
                 Assert.Equal(fragment.CreatedAt, unchangedFragment.CreatedAt);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ReviewPage_RunAnalysisHandlerCallsApplicationServiceAndRedirectsToDetails()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.ReadyForAnalysis,
+                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = new CapturingAnalysisExecutionService(new AnalysisExecutionOutcome(
+                    AnalysisExecutionOutcomeKind.Completed,
+                    analysis.Id,
+                    AiAnalysisResultStatus.Completed,
+                    "Preliminary AI analysis completed."));
+                var pageModel = new ReviewModel(dbContext, service);
+
+                var result = await pageModel.OnPostRunAnalysisAsync(analysis.Id);
+                var redirect = Assert.IsType<RedirectToPageResult>(result);
+
+                Assert.Equal(analysis.Id, service.LastAnalysisId);
+                Assert.Equal(1, service.CallCount);
+                Assert.Equal("/Analyses/Details", redirect.PageName);
+                Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
+                Assert.Equal("Preliminary AI analysis completed.", pageModel.AnalysisRunMessage);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ReviewPage_RunAnalysisHandlerStaysOnReviewWhenServiceReportsInvalidInput()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Incomplete request",
+                AnalysisStatus.InputIncomplete,
+                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
+            analysis.ProjectRequest = string.Empty;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = new CapturingAnalysisExecutionService(new AnalysisExecutionOutcome(
+                    AnalysisExecutionOutcomeKind.InvalidInput,
+                    analysis.Id,
+                    ResultStatus: null,
+                    Message: "Minimum analysis fields are not fully filled."));
+                var pageModel = new ReviewModel(dbContext, service);
+
+                var result = await pageModel.OnPostRunAnalysisAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.Equal(analysis.Id, service.LastAnalysisId);
+                Assert.Equal(1, service.CallCount);
+                Assert.NotNull(pageModel.Analysis);
+                Assert.False(pageModel.ModelState.IsValid);
+                Assert.Contains(
+                    pageModel.ModelState[string.Empty]!.Errors,
+                    error => error.ErrorMessage.Contains("Minimum analysis fields", StringComparison.Ordinal));
             }
         }
         finally
@@ -1515,6 +1609,24 @@ public sealed class AnalysisPagesTests
         public string ContentRootPath { get; set; } = contentRootPath;
 
         public string EnvironmentName { get; set; } = "Development";
+    }
+
+    private sealed class CapturingAnalysisExecutionService(AnalysisExecutionOutcome outcome)
+        : IAnalysisExecutionService
+    {
+        public int CallCount { get; private set; }
+
+        public Guid LastAnalysisId { get; private set; }
+
+        public Task<AnalysisExecutionOutcome> RunAsync(
+            Guid analysisId,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            LastAnalysisId = analysisId;
+
+            return Task.FromResult(outcome);
+        }
     }
 
     private sealed class CallbackFormFile(string fileName, string content, Action afterCopy) : IFormFile

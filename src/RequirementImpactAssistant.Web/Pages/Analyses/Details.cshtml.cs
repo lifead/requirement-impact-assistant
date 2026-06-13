@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
+using RequirementImpactAssistant.Web.Domain.Impact;
 
 namespace RequirementImpactAssistant.Web.Pages.Analyses;
 
@@ -29,6 +30,9 @@ public sealed class DetailsModel(ApplicationDbContext dbContext, IWebHostEnviron
     public FileContextFragmentInput UploadContextFragmentInput { get; set; } = new();
 
     public AnalysisDetails? Analysis { get; private set; }
+
+    [TempData]
+    public string? AnalysisRunMessage { get; set; }
 
     public Action<string> DeleteStoredUploadFile { get; set; } = System.IO.File.Delete;
 
@@ -165,6 +169,19 @@ public sealed class DetailsModel(ApplicationDbContext dbContext, IWebHostEnviron
             analysis.CreatedAt,
             analysis.UpdatedAt,
             analysis.FixedAt,
+            analysis.AiAnalysisResult is null
+                ? null
+                : new AiAnalysisResultDetails(
+                    analysis.AiAnalysisResult.Status,
+                    analysis.AiAnalysisResult.GeneratedAt,
+                    analysis.AiAnalysisResult.EngineName,
+                    analysis.AiAnalysisResult.ProviderName,
+                    analysis.AiAnalysisResult.ModelName,
+                    analysis.AiAnalysisResult.PromptVersion,
+                    analysis.AiAnalysisResult.InputSnapshot,
+                    analysis.AiAnalysisResult.RawResponse,
+                    analysis.AiAnalysisResult.ErrorMessage,
+                    analysis.AiAnalysisResult.ImpactMap),
             analysis.ContextFragments
                 .OrderByDescending(fragment => fragment.CreatedAt)
                 .Select(fragment => new ContextFragmentDetails(
@@ -182,6 +199,7 @@ public sealed class DetailsModel(ApplicationDbContext dbContext, IWebHostEnviron
         var analysis = await dbContext.Analyses
             .AsNoTracking()
             .Include(candidate => candidate.ContextFragments)
+            .Include(candidate => candidate.AiAnalysisResult)
             .SingleOrDefaultAsync(candidate => candidate.Id == id);
 
         return analysis is null
@@ -200,7 +218,45 @@ public sealed class DetailsModel(ApplicationDbContext dbContext, IWebHostEnviron
         DateTimeOffset CreatedAt,
         DateTimeOffset UpdatedAt,
         DateTimeOffset? FixedAt,
+        AiAnalysisResultDetails? AiAnalysisResult,
         IReadOnlyList<ContextFragmentDetails> ContextFragments);
+
+    public sealed record AiAnalysisResultDetails(
+        AiAnalysisResultStatus Status,
+        DateTimeOffset? GeneratedAt,
+        string EngineName,
+        string ProviderName,
+        string ModelName,
+        string PromptVersion,
+        string InputSnapshot,
+        string RawResponse,
+        string ErrorMessage,
+        ImpactMap? ImpactMap)
+    {
+        public IReadOnlyList<ImpactMapSectionDetails> ImpactSections =>
+            ImpactMap is null
+                ? []
+                :
+                [
+                    new("Change summary", [ImpactMap.ChangeSummary]),
+                    new("Affected requirements", ImpactMap.AffectedRequirements),
+                    new("Affected tasks", ImpactMap.AffectedTasks),
+                    new("Affected project decisions", ImpactMap.AffectedProjectDecisions),
+                    new("Affected API/interfaces/documents/tests", ImpactMap.AffectedApiInterfacesDocumentsTests),
+                    new("Affected architectural constraints", ImpactMap.AffectedArchitecturalConstraints),
+                    new("Affected organizational context", ImpactMap.AffectedOrganizationalContextItems),
+                    new("Contradictions", ImpactMap.Contradictions),
+                    new("Missing information", ImpactMap.MissingInformation),
+                    new("Clarification questions", ImpactMap.ClarificationQuestions),
+                    new("Risks", ImpactMap.Risks),
+                    new("Options for expert review", ImpactMap.OptionsForExpertReview),
+                    new("Preliminary assessment", [ImpactMap.PreliminaryAssessment])
+                ];
+    }
+
+    public sealed record ImpactMapSectionDetails(
+        string Title,
+        IReadOnlyList<ImpactMapItem> Items);
 
     public sealed record ContextFragmentDetails(
         Guid Id,

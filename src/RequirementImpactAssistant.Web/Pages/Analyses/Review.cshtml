@@ -25,11 +25,20 @@
             The quality of future intelligent analysis depends on the completeness of the project context.
         </div>
 
+        <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+
         @if (Model.Analysis.HasMinimumInput)
         {
             <div class="alert alert-success" role="status">
                 Minimum analysis fields are filled. The analysis can continue without additional context fragments.
             </div>
+
+            <form method="post"
+                  asp-page-handler="RunAnalysis"
+                  asp-route-id="@Model.Analysis.Id"
+                  class="mb-4">
+                <button type="submit" class="btn btn-primary">Run preliminary analysis</button>
+            </form>
         }
         else
         {

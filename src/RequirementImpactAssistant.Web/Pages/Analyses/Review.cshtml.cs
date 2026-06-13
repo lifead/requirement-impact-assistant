@@ -1,30 +1,71 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
+using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
 
 namespace RequirementImpactAssistant.Web.Pages.Analyses;
 
-public sealed class ReviewModel(ApplicationDbContext dbContext) : PageModel
+public sealed class ReviewModel(
+    ApplicationDbContext dbContext,
+    IAnalysisExecutionService? analysisExecutionService = null) : PageModel
 {
     public AnalysisReview? Analysis { get; private set; }
 
+    [TempData]
+    public string? AnalysisRunMessage { get; set; }
+
     public async Task<IActionResult> OnGetAsync(Guid id)
+    {
+        Analysis = await LoadReviewAsync(id);
+
+        return Analysis is null
+            ? NotFound()
+            : Page();
+    }
+
+    public async Task<IActionResult> OnPostRunAnalysisAsync(Guid id)
+    {
+        if (analysisExecutionService is null)
+        {
+            throw new InvalidOperationException("Analysis execution service is not configured.");
+        }
+
+        var cancellationToken = PageContext?.HttpContext?.RequestAborted ?? CancellationToken.None;
+        var outcome = await analysisExecutionService.RunAsync(id, cancellationToken);
+
+        if (outcome.Kind == AnalysisExecutionOutcomeKind.NotFound)
+        {
+            return NotFound();
+        }
+
+        if (outcome.Kind == AnalysisExecutionOutcomeKind.InvalidInput)
+        {
+            ModelState.AddModelError(string.Empty, outcome.Message);
+            Analysis = await LoadReviewAsync(id);
+
+            return Analysis is null
+                ? NotFound()
+                : Page();
+        }
+
+        AnalysisRunMessage = outcome.Message;
+
+        return RedirectToPage("/Analyses/Details", new { id = outcome.AnalysisId });
+    }
+
+    private async Task<AnalysisReview?> LoadReviewAsync(Guid id)
     {
         var analysis = await dbContext.Analyses
             .AsNoTracking()
             .Include(candidate => candidate.ContextFragments)
             .SingleOrDefaultAsync(candidate => candidate.Id == id);
 
-        Analysis = analysis is null
+        return analysis is null
             ? null
             : ToReview(analysis);
-
-        return Analysis is null
-            ? NotFound()
-            : Page();
     }
 
     private static AnalysisReview ToReview(Analysis analysis) =>

@@ -40,6 +40,8 @@ public static class ServiceCollectionExtensions
                 "DeepSeek model is required when DeepSeek provider is selected.");
 
         services.AddScoped<IAiAnalysisEngine, DirectLlmAnalysisEngine>();
+        services.AddScoped<IAnalysisExecutionService, AnalysisExecutionService>();
+        services.AddScoped<IAnalysisInputAssembler, AnalysisInputAssembler>();
         services.TryAddScoped<DemoLlmProvider>();
         services.AddHttpClient<DeepSeekLlmProvider>();
         services.TryAddScoped<ILlmProvider>(serviceProvider =>
