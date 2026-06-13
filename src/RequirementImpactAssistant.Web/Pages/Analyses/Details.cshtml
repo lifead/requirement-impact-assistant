@@ -19,6 +19,15 @@
             </div>
             <div class="d-flex align-items-center gap-2">
                 <span class="badge text-bg-secondary">@Model.Analysis.Status</span>
+                @if (Model.Analysis.AiAnalysisResult?.ImpactMap is not null &&
+                    Model.Analysis.AiAnalysisResult.Status is AiAnalysisResultStatus.Completed or AiAnalysisResultStatus.CompletedWithWarnings)
+                {
+                    <a class="btn btn-outline-success btn-sm"
+                       asp-page="/Analyses/ExpertEvaluation"
+                       asp-route-id="@Model.Analysis.Id">
+                        Expert evaluation
+                    </a>
+                }
                 <a class="btn btn-outline-secondary btn-sm"
                    asp-page="/Analyses/Review"
                    asp-route-id="@Model.Analysis.Id">

@@ -1,0 +1,237 @@
+@page "/Analyses/{id:guid}/ExpertEvaluation"
+@model RequirementImpactAssistant.Web.Pages.Analyses.ExpertEvaluationModel
+@using RequirementImpactAssistant.Web.Domain.Enums
+@using RequirementImpactAssistant.Web.Domain.Impact
+@{
+    ViewData["Title"] = Model.Analysis?.Title is null
+        ? "Expert evaluation"
+        : $"Expert evaluation - {Model.Analysis.Title}";
+}
+
+@if (Model.Analysis is not null)
+{
+    <section class="py-4">
+        <div class="mb-4">
+            <a asp-page="/Analyses/Details" asp-route-id="@Model.Analysis.Id" class="link-secondary">Back to analysis details</a>
+        </div>
+
+        <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
+            <div>
+                <h1 class="h2 mb-2">Expert evaluation</h1>
+                <p class="text-muted mb-0">@Model.Analysis.Title</p>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <span class="badge text-bg-secondary">@Model.Analysis.Status</span>
+                <span class="badge text-bg-info">@Model.Analysis.AiResultStatus</span>
+            </div>
+        </div>
+
+        @if (!string.IsNullOrWhiteSpace(Model.ExpertEvaluationMessage))
+        {
+            <div class="alert alert-success" role="status">@Model.ExpertEvaluationMessage</div>
+        }
+
+        <form method="post" class="d-grid gap-4">
+            <div asp-validation-summary="ModelOnly" class="text-danger"></div>
+
+            <section>
+                <h2 class="h4 mb-3">Impact map marks</h2>
+
+                @{
+                    var itemIndex = 0;
+                }
+
+                <div class="d-grid gap-4">
+                    @foreach (var impactSection in Model.Analysis.ImpactSections)
+                    {
+                        <section>
+                            <h3 class="h5 mb-3">@impactSection.Title</h3>
+
+                            @if (impactSection.Items.Count == 0)
+                            {
+                                <p class="text-muted mb-0">No items.</p>
+                            }
+                            else
+                            {
+                                <div class="table-responsive">
+                                    <table class="table table-sm align-middle">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col">Item</th>
+                                                <th scope="col">AI result</th>
+                                                <th scope="col">Mark</th>
+                                                <th scope="col">Comment</th>
+                                                <th scope="col">Correction text</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var item in impactSection.Items)
+                                            {
+                                                <tr>
+                                                    <td>
+                                                        <input type="hidden" asp-for="Input.EvaluatedItems[itemIndex].TargetId" value="@item.Id" />
+                                                        <div><code>@item.Id</code></div>
+                                                        <div class="small text-muted">@item.ItemType / @item.Severity</div>
+                                                    </td>
+                                                    <td class="text-break">
+                                                        <div class="fw-medium">@item.Title</div>
+                                                        <div>@item.Description</div>
+                                                        @if (!string.IsNullOrWhiteSpace(item.Notes))
+                                                        {
+                                                            <div class="small text-muted">@item.Notes</div>
+                                                        }
+                                                    </td>
+                                                    <td>
+                                                        <select asp-for="Input.EvaluatedItems[itemIndex].Mark"
+                                                                asp-items="Html.GetEnumSelectList<ExpertMark>()"
+                                                                class="form-select form-select-sm"></select>
+                                                        <span asp-validation-for="Input.EvaluatedItems[itemIndex].Mark" class="text-danger small"></span>
+                                                    </td>
+                                                    <td>
+                                                        <textarea asp-for="Input.EvaluatedItems[itemIndex].Comment"
+                                                                  class="form-control form-control-sm"
+                                                                  rows="3"></textarea>
+                                                    </td>
+                                                    <td>
+                                                        <textarea asp-for="Input.EvaluatedItems[itemIndex].CorrectionText"
+                                                                  class="form-control form-control-sm"
+                                                                  rows="3"></textarea>
+                                                        <span asp-validation-for="Input.EvaluatedItems[itemIndex].CorrectionText" class="text-danger small"></span>
+                                                    </td>
+                                                </tr>
+
+                                                itemIndex++;
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </section>
+                    }
+                </div>
+            </section>
+
+            <section class="border-top pt-4">
+                <h2 class="h4 mb-3">Missed items</h2>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th scope="col">Type</th>
+                                <th scope="col">Title</th>
+                                <th scope="col">Description</th>
+                                <th scope="col">Severity</th>
+                                <th scope="col">Comment</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (var index = 0; index < Model.Input.MissedItems.Count; index++)
+                            {
+                                <tr>
+                                    <td>
+                                        <select asp-for="Input.MissedItems[index].ItemType"
+                                                asp-items="Html.GetEnumSelectList<ImpactMapItemType>()"
+                                                class="form-select form-select-sm"></select>
+                                    </td>
+                                    <td>
+                                        <input asp-for="Input.MissedItems[index].Title" class="form-control form-control-sm" />
+                                        <span asp-validation-for="Input.MissedItems[index].Title" class="text-danger small"></span>
+                                    </td>
+                                    <td>
+                                        <textarea asp-for="Input.MissedItems[index].Description" class="form-control form-control-sm" rows="3"></textarea>
+                                        <span asp-validation-for="Input.MissedItems[index].Description" class="text-danger small"></span>
+                                    </td>
+                                    <td>
+                                        <select asp-for="Input.MissedItems[index].Severity"
+                                                asp-items="Html.GetEnumSelectList<ImpactSeverity>()"
+                                                class="form-select form-select-sm"></select>
+                                    </td>
+                                    <td>
+                                        <textarea asp-for="Input.MissedItems[index].Comment" class="form-control form-control-sm" rows="3"></textarea>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="border-top pt-4">
+                <h2 class="h4 mb-3">Additional corrections</h2>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th scope="col">Target item</th>
+                                <th scope="col">Type</th>
+                                <th scope="col">Text</th>
+                                <th scope="col">Comment</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (var index = 0; index < Model.Input.Corrections.Count; index++)
+                            {
+                                <tr>
+                                    <td>
+                                        <select asp-for="Input.Corrections[index].TargetId" class="form-select form-select-sm">
+                                            <option value="">Select target</option>
+                                            @foreach (var item in Model.Analysis.ImpactSections.SelectMany(section => section.Items))
+                                            {
+                                                <option value="@item.Id">@item.Id - @item.Title</option>
+                                            }
+                                        </select>
+                                        <span asp-validation-for="Input.Corrections[index].TargetId" class="text-danger small"></span>
+                                    </td>
+                                    <td>
+                                        <select asp-for="Input.Corrections[index].ItemType"
+                                                asp-items="Html.GetEnumSelectList<ImpactMapItemType>()"
+                                                class="form-select form-select-sm"></select>
+                                    </td>
+                                    <td>
+                                        <textarea asp-for="Input.Corrections[index].Text" class="form-control form-control-sm" rows="3"></textarea>
+                                        <span asp-validation-for="Input.Corrections[index].Text" class="text-danger small"></span>
+                                    </td>
+                                    <td>
+                                        <textarea asp-for="Input.Corrections[index].Comment" class="form-control form-control-sm" rows="3"></textarea>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="border-top pt-4">
+                <h2 class="h4 mb-3">Overall ratings</h2>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label asp-for="Input.ContextSufficiency" class="form-label">Context sufficiency</label>
+                        <select asp-for="Input.ContextSufficiency"
+                                asp-items="Html.GetEnumSelectList<ContextSufficiencyRating>()"
+                                class="form-select"></select>
+                    </div>
+                    <div class="col-md-6">
+                        <label asp-for="Input.ResultUsefulness" class="form-label">Result usefulness</label>
+                        <select asp-for="Input.ResultUsefulness"
+                                asp-items="Html.GetEnumSelectList<ResultUsefulnessRating>()"
+                                class="form-select"></select>
+                    </div>
+                </div>
+
+                <div class="mt-3">
+                    <label asp-for="Input.GeneralComment" class="form-label">General comment</label>
+                    <textarea asp-for="Input.GeneralComment" class="form-control" rows="4"></textarea>
+                </div>
+            </section>
+
+            <div class="d-flex justify-content-end gap-2 border-top pt-4">
+                <a class="btn btn-outline-secondary"
+                   asp-page="/Analyses/Details"
+                   asp-route-id="@Model.Analysis.Id">
+                    Cancel
+                </a>
+                <button type="submit" class="btn btn-primary">Save expert evaluation</button>
+            </div>
+        </form>
+    </section>
+}

@@ -9,6 +9,7 @@ using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
+using RequirementImpactAssistant.Web.Domain.Impact;
 using RequirementImpactAssistant.Web.Pages.Analyses;
 
 namespace RequirementImpactAssistant.Tests.Pages;
@@ -1430,6 +1431,361 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
+    public async Task ExpertEvaluationPage_OpensOnlyForCompletedAiResultWithImpactMap()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            analysis.AiAnalysisResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.Completed,
+                CreateImpactMap());
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertEvaluationModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                Assert.Equal(analysis.Id, pageModel.Analysis.Id);
+                Assert.Contains(
+                    pageModel.Analysis.ImpactSections.SelectMany(section => section.Items),
+                    item => item.Id == "affected-requirement-001");
+                Assert.Contains(
+                    pageModel.Input.EvaluatedItems,
+                    item => item.TargetId == "affected-requirement-001");
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Theory]
+    [InlineData(AiAnalysisResultStatus.Failed, true)]
+    [InlineData(AiAnalysisResultStatus.InvalidResponse, true)]
+    [InlineData(AiAnalysisResultStatus.Completed, false)]
+    public async Task ExpertEvaluationPage_DoesNotCreateEvaluationForFailedInvalidOrMissingImpactMap(
+        AiAnalysisResultStatus resultStatus,
+        bool hasImpactMap)
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.LlmAnalysisFailed,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            analysis.AiAnalysisResult = CreateAiAnalysisResult(
+                analysis.Id,
+                resultStatus,
+                hasImpactMap ? CreateImpactMap() : null);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertEvaluationModel(dbContext)
+                {
+                    Input = CreateExpertEvaluationInput(CreateImpactMap())
+                };
+
+                var result = await pageModel.OnPostAsync(analysis.Id);
+
+                Assert.IsType<NotFoundResult>(result);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var unchanged = await dbContext.Analyses
+                    .Include(candidate => candidate.ExpertEvaluation)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Null(unchanged.ExpertEvaluation);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExpertEvaluationPage_ReturnsValidationErrorForDuplicateEvaluatedItemTargets()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var originalUpdatedAt = new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero);
+            var impactMap = CreateImpactMap();
+            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.NeedsExpertEvaluation, originalUpdatedAt);
+            analysis.AiAnalysisResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.Completed, impactMap);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var input = CreateExpertEvaluationInput(impactMap);
+                input.EvaluatedItems.Add(new ExpertEvaluationModel.EvaluatedImpactItemInput
+                {
+                    TargetId = "risk-001",
+                    Mark = ExpertMark.Confirmed,
+                    Comment = "Duplicate malformed post."
+                });
+
+                var pageModel = new ExpertEvaluationModel(dbContext)
+                {
+                    Input = input
+                };
+
+                var result = await pageModel.OnPostAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.False(pageModel.ModelState.IsValid);
+                Assert.Contains(
+                    pageModel.ModelState.Values.SelectMany(value => value.Errors),
+                    error => error.ErrorMessage == "Impact item target must be unique.");
+                Assert.NotNull(pageModel.Analysis);
+                Assert.Equal(
+                    EnumerateImpactItems(impactMap).Count(),
+                    pageModel.Input.EvaluatedItems.Count);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var unchanged = await dbContext.Analyses
+                    .Include(candidate => candidate.ExpertEvaluation)
+                    .Include(candidate => candidate.ExpertConclusion)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(AnalysisStatus.NeedsExpertEvaluation, unchanged.Status);
+                Assert.Equal(originalUpdatedAt, unchanged.UpdatedAt);
+                Assert.Null(unchanged.ExpertEvaluation);
+                Assert.Null(unchanged.ExpertConclusion);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExpertEvaluationPage_SavesMarksMissedItemsCorrectionsRatingsAndGeneralComment()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var originalUpdatedAt = new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero);
+            var impactMap = CreateImpactMap();
+            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.NeedsExpertEvaluation, originalUpdatedAt);
+            analysis.AiAnalysisResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.Completed, impactMap);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertEvaluationModel(dbContext)
+                {
+                    Input = CreateExpertEvaluationInput(impactMap)
+                };
+
+                var result = await pageModel.OnPostAsync(analysis.Id);
+                var redirect = Assert.IsType<RedirectToPageResult>(result);
+
+                Assert.Equal("/Analyses/ExpertEvaluation", redirect.PageName);
+                Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var updated = await dbContext.Analyses
+                    .Include(candidate => candidate.ExpertEvaluation)
+                        .ThenInclude(candidate => candidate!.EvaluatedItems)
+                    .Include(candidate => candidate.ExpertEvaluation)
+                        .ThenInclude(candidate => candidate!.MissedItems)
+                    .Include(candidate => candidate.ExpertEvaluation)
+                        .ThenInclude(candidate => candidate!.Corrections)
+                    .Include(candidate => candidate.ExpertConclusion)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(AnalysisStatus.NeedsExpertEvaluation, updated.Status);
+                Assert.True(updated.UpdatedAt > originalUpdatedAt);
+                Assert.Null(updated.ExpertConclusion);
+
+                var evaluation = Assert.IsType<ExpertEvaluation>(updated.ExpertEvaluation);
+                Assert.Equal(ContextSufficiencyRating.PartiallySufficient, evaluation.ContextSufficiency);
+                Assert.Equal(ResultUsefulnessRating.Useful, evaluation.ResultUsefulness);
+                Assert.Equal("Useful enough for expert review.", evaluation.GeneralComment);
+
+                Assert.Contains(
+                    evaluation.EvaluatedItems,
+                    item =>
+                        item.TargetId == "affected-requirement-001" &&
+                        item.Mark == ExpertMark.Corrected &&
+                        item.Comment == "Requirement impact needs wording." &&
+                        item.CorrectionText == "Clarify affected acceptance criteria.");
+                Assert.Contains(
+                    evaluation.EvaluatedItems,
+                    item =>
+                        item.TargetId == "risk-001" &&
+                        item.Mark == ExpertMark.Rejected &&
+                        item.Comment == "Risk is overstated." &&
+                        item.CorrectionText == string.Empty);
+
+                var missedItem = Assert.Single(evaluation.MissedItems);
+                Assert.Equal(ImpactMapItemType.AffectedTask, missedItem.ItemType);
+                Assert.Equal("Regression task", missedItem.Title);
+                Assert.Equal("Add a regression test task.", missedItem.Description);
+                Assert.Equal(ImpactSeverity.Medium, missedItem.Severity);
+                Assert.Equal("Missed by preliminary analysis.", missedItem.Comment);
+
+                var correction = Assert.Single(evaluation.Corrections);
+                Assert.Equal("risk-001", correction.TargetId);
+                Assert.Equal(ExpertEvaluationTargetType.ImpactItem, correction.TargetType);
+                Assert.Equal(ImpactMapItemType.Risk, correction.ItemType);
+                Assert.Equal("Risk should mention rollout sequencing.", correction.Text);
+                Assert.Equal("Additional expert correction.", correction.Comment);
+
+                Assert.Equal(1, await dbContext.ExpertEvaluations.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExpertEvaluationPage_RepeatedSaveUpdatesSingleEvaluationWithoutCallingAiServices()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var impactMap = CreateImpactMap();
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            analysis.AiAnalysisResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.CompletedWithWarnings,
+                impactMap);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertEvaluationModel(dbContext)
+                {
+                    Input = CreateExpertEvaluationInput(impactMap)
+                };
+
+                Assert.IsType<RedirectToPageResult>(await pageModel.OnPostAsync(analysis.Id));
+            }
+
+            Guid evaluationId;
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                evaluationId = await dbContext.ExpertEvaluations
+                    .Where(candidate => candidate.AnalysisId == analysis.Id)
+                    .Select(candidate => candidate.Id)
+                    .SingleAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var updatedInput = CreateExpertEvaluationInput(impactMap);
+                updatedInput.ContextSufficiency = ContextSufficiencyRating.Sufficient;
+                updatedInput.ResultUsefulness = ResultUsefulnessRating.PartiallyUseful;
+                updatedInput.GeneralComment = "Updated expert evaluation.";
+                updatedInput.MissedItems.Clear();
+                updatedInput.Corrections.Clear();
+                updatedInput.EvaluatedItems.Single(item => item.TargetId == "risk-001").Mark = ExpertMark.NeedsClarification;
+                updatedInput.EvaluatedItems.Single(item => item.TargetId == "risk-001").Comment = "Clarify probability.";
+
+                var pageModel = new ExpertEvaluationModel(dbContext)
+                {
+                    Input = updatedInput
+                };
+
+                Assert.IsType<RedirectToPageResult>(await pageModel.OnPostAsync(analysis.Id));
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var evaluation = await dbContext.ExpertEvaluations
+                    .Include(candidate => candidate.EvaluatedItems)
+                    .Include(candidate => candidate.MissedItems)
+                    .Include(candidate => candidate.Corrections)
+                    .SingleAsync(candidate => candidate.AnalysisId == analysis.Id);
+
+                Assert.Equal(evaluationId, evaluation.Id);
+                Assert.Equal(ContextSufficiencyRating.Sufficient, evaluation.ContextSufficiency);
+                Assert.Equal(ResultUsefulnessRating.PartiallyUseful, evaluation.ResultUsefulness);
+                Assert.Equal("Updated expert evaluation.", evaluation.GeneralComment);
+                Assert.Empty(evaluation.MissedItems);
+                Assert.Empty(evaluation.Corrections);
+                Assert.Equal(1, await dbContext.ExpertEvaluations.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
+                Assert.Contains(
+                    evaluation.EvaluatedItems,
+                    item =>
+                        item.TargetId == "risk-001" &&
+                        item.Mark == ExpertMark.NeedsClarification &&
+                        item.Comment == "Clarify probability.");
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task Pages_DisplayPassiveStatusWithoutChangingItOrStartingActions()
     {
         var databasePath = CreateDatabasePath();
@@ -1551,6 +1907,131 @@ public sealed class AnalysisPagesTests
             Text = text,
             CreatedAt = createdAt
         };
+
+    private static AiAnalysisResult CreateAiAnalysisResult(
+        Guid analysisId,
+        AiAnalysisResultStatus status,
+        ImpactMap? impactMap) =>
+        new()
+        {
+            AnalysisId = analysisId,
+            Status = status,
+            GeneratedAt = new DateTimeOffset(2026, 06, 13, 09, 00, 00, TimeSpan.Zero),
+            EngineName = "test-engine",
+            ProviderName = "test-provider",
+            ModelName = "test-model",
+            PromptVersion = "test-v1",
+            InputSnapshot = "{ \"input\": \"snapshot\" }",
+            RawResponse = "{ \"raw\": \"response\" }",
+            ErrorMessage = status is AiAnalysisResultStatus.Failed or AiAnalysisResultStatus.InvalidResponse
+                ? "Analysis did not produce a usable structured impact map."
+                : string.Empty,
+            ImpactMap = impactMap
+        };
+
+    private static ImpactMap CreateImpactMap()
+    {
+        var impactMap = new ImpactMap
+        {
+            ChangeSummary =
+            {
+                Title = "Gateway change summary",
+                Description = "Gateway API behavior changes.",
+                Severity = ImpactSeverity.Medium,
+                Notes = "Preliminary summary."
+            },
+            PreliminaryAssessment =
+            {
+                Title = "Requires expert review",
+                Description = "The change needs human validation.",
+                Severity = ImpactSeverity.High,
+                Notes = "Preliminary only."
+            }
+        };
+
+        var affectedRequirement = impactMap.AddAffectedRequirement();
+        affectedRequirement.Title = "Gateway requirement";
+        affectedRequirement.Description = "Update gateway acceptance criteria.";
+        affectedRequirement.Severity = ImpactSeverity.High;
+        affectedRequirement.Notes = "Confirm with analyst.";
+
+        var risk = impactMap.AddRisk();
+        risk.Title = "Gateway compatibility risk";
+        risk.Description = "Existing clients may depend on previous behavior.";
+        risk.Severity = ImpactSeverity.Medium;
+        risk.Notes = "Validate rollout.";
+
+        return impactMap;
+    }
+
+    private static ExpertEvaluationModel.ExpertEvaluationInput CreateExpertEvaluationInput(ImpactMap impactMap)
+    {
+        var input = new ExpertEvaluationModel.ExpertEvaluationInput
+        {
+            ContextSufficiency = ContextSufficiencyRating.PartiallySufficient,
+            ResultUsefulness = ResultUsefulnessRating.Useful,
+            GeneralComment = "Useful enough for expert review."
+        };
+
+        foreach (var item in EnumerateImpactItems(impactMap))
+        {
+            input.EvaluatedItems.Add(new ExpertEvaluationModel.EvaluatedImpactItemInput
+            {
+                TargetId = item.Id,
+                Mark = item.Id switch
+                {
+                    "affected-requirement-001" => ExpertMark.Corrected,
+                    "risk-001" => ExpertMark.Rejected,
+                    _ => ExpertMark.Confirmed
+                },
+                Comment = item.Id switch
+                {
+                    "affected-requirement-001" => "Requirement impact needs wording.",
+                    "risk-001" => "Risk is overstated.",
+                    _ => "Accepted."
+                },
+                CorrectionText = item.Id == "affected-requirement-001"
+                    ? "Clarify affected acceptance criteria."
+                    : string.Empty
+            });
+        }
+
+        input.MissedItems.Add(new ExpertEvaluationModel.MissedItemInput
+        {
+            ItemType = ImpactMapItemType.AffectedTask,
+            Title = "Regression task",
+            Description = "Add a regression test task.",
+            Severity = ImpactSeverity.Medium,
+            Comment = "Missed by preliminary analysis."
+        });
+
+        input.Corrections.Add(new ExpertEvaluationModel.CorrectionInput
+        {
+            TargetId = "risk-001",
+            ItemType = ImpactMapItemType.Risk,
+            Text = "Risk should mention rollout sequencing.",
+            Comment = "Additional expert correction."
+        });
+
+        return input;
+    }
+
+    private static IEnumerable<ImpactMapItem> EnumerateImpactItems(ImpactMap impactMap) =>
+    [
+        impactMap.ChangeSummary,
+        ..impactMap.AffectedRequirements,
+        ..impactMap.AffectedTasks,
+        ..impactMap.AffectedProjectDecisions,
+        ..impactMap.AffectedApiInterfacesDocumentsTests,
+        ..impactMap.AffectedArchitecturalConstraints,
+        ..impactMap.AffectedOrganizationalContextItems,
+        ..impactMap.Contradictions,
+        ..impactMap.MissingInformation,
+        ..impactMap.ClarificationQuestions,
+        ..impactMap.Risks,
+        ..impactMap.OptionsForExpertReview,
+        impactMap.PreliminaryAssessment
+    ];
 
     private static IFormFile CreateUploadFile(string fileName, string content)
     {
