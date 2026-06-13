@@ -16,7 +16,14 @@
                 <h1 class="h2 mb-2">@Model.Analysis.Title</h1>
                 <p class="text-muted mb-0">Read-only analysis overview.</p>
             </div>
-            <span class="badge text-bg-secondary">@Model.Analysis.Status</span>
+            <div class="d-flex align-items-center gap-2">
+                <span class="badge text-bg-secondary">@Model.Analysis.Status</span>
+                <a class="btn btn-outline-primary btn-sm"
+                   asp-page="/Analyses/Edit"
+                   asp-route-id="@Model.Analysis.Id">
+                    Edit
+                </a>
+            </div>
         </div>
 
         <dl class="row">

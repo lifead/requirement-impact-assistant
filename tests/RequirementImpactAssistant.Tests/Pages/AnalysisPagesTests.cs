@@ -106,6 +106,179 @@ public sealed class AnalysisPagesTests
         }
     }
 
+    [Fact]
+    public async Task CreatePage_CreatesAnalysisAndRedirectsToReadOnlyDetails()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+            }
+
+            Guid analysisId;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new CreateModel(dbContext)
+                {
+                    Input = CreateInput("Payment API change")
+                };
+
+                var result = await pageModel.OnPostAsync();
+                var redirect = Assert.IsType<RedirectToPageResult>(result);
+
+                Assert.Equal("/Analyses/Details", redirect.PageName);
+                analysisId = Assert.IsType<Guid>(redirect.RouteValues?["id"]);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var analysis = await dbContext.Analyses.SingleAsync(candidate => candidate.Id == analysisId);
+
+                Assert.Equal("Payment API change", analysis.Title);
+                Assert.Equal(AnalysisStatus.Draft, analysis.Status);
+                Assert.Equal("Original requirement for Payment API change", analysis.OriginalDescription);
+                Assert.Equal("Project request for Payment API change", analysis.ProjectRequest);
+                Assert.Equal("Situation for Payment API change", analysis.SituationDescription);
+                Assert.Equal("Change source for Payment API change", analysis.ChangeSource);
+                Assert.NotEqual(default, analysis.CreatedAt);
+                Assert.Equal(analysis.CreatedAt, analysis.UpdatedAt);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task CreatePage_ReturnsValidationErrorsForMissingInput()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                var pageModel = new CreateModel(dbContext);
+
+                var result = await pageModel.OnPostAsync();
+
+                Assert.IsType<PageResult>(result);
+                Assert.False(pageModel.ModelState.IsValid);
+                Assert.Equal(5, pageModel.ModelState.ErrorCount);
+                Assert.Empty(await dbContext.Analyses.ToListAsync());
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task EditPage_UpdatesAnalysisAndRedirectsToReadOnlyDetails()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var originalUpdatedAt = new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero);
+            var analysis = CreateAnalysis("Legacy request", AnalysisStatus.Draft, originalUpdatedAt);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new EditModel(dbContext)
+                {
+                    Input = CreateInput("Edited request")
+                };
+
+                var result = await pageModel.OnPostAsync(analysis.Id);
+                var redirect = Assert.IsType<RedirectToPageResult>(result);
+
+                Assert.Equal("/Analyses/Details", redirect.PageName);
+                Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var updated = await dbContext.Analyses.SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal("Edited request", updated.Title);
+                Assert.Equal("Original requirement for Edited request", updated.OriginalDescription);
+                Assert.Equal("Project request for Edited request", updated.ProjectRequest);
+                Assert.Equal("Situation for Edited request", updated.SituationDescription);
+                Assert.Equal("Change source for Edited request", updated.ChangeSource);
+                Assert.Equal(analysis.CreatedAt, updated.CreatedAt);
+                Assert.True(updated.UpdatedAt > originalUpdatedAt);
+                Assert.Equal(AnalysisStatus.Draft, updated.Status);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task EditPage_ReturnsValidationErrorsWithoutChangingAnalysis()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var originalUpdatedAt = new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero);
+            var analysis = CreateAnalysis("Existing request", AnalysisStatus.Draft, originalUpdatedAt);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new EditModel(dbContext);
+
+                var result = await pageModel.OnPostAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.False(pageModel.ModelState.IsValid);
+                Assert.Equal(5, pageModel.ModelState.ErrorCount);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var unchanged = await dbContext.Analyses.SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal("Existing request", unchanged.Title);
+                Assert.Equal(originalUpdatedAt, unchanged.UpdatedAt);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
     private static string CreateDatabasePath() =>
         Path.Combine(
             Path.GetTempPath(),
@@ -136,6 +309,16 @@ public sealed class AnalysisPagesTests
             UpdatedAt = updatedAt
         };
     }
+
+    private static AnalysisFormInput CreateInput(string title) =>
+        new()
+        {
+            Title = title,
+            OriginalDescription = $"Original requirement for {title}",
+            ProjectRequest = $"Project request for {title}",
+            SituationDescription = $"Situation for {title}",
+            ChangeSource = $"Change source for {title}"
+        };
 
     private static void DeleteDatabase(string databasePath)
     {

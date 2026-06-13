@@ -1,0 +1,55 @@
+@page "/Analyses/New"
+@model RequirementImpactAssistant.Web.Pages.Analyses.CreateModel
+@{
+    ViewData["Title"] = "New analysis";
+}
+
+<section class="py-4">
+    <div class="mb-4">
+        <a asp-page="/Analyses/Index" class="link-secondary">Back to saved analyses</a>
+    </div>
+
+    <div class="mb-4">
+        <h1 class="h2 mb-2">New analysis</h1>
+        <p class="text-muted mb-0">Create the minimal input artifact for later analysis.</p>
+    </div>
+
+    <form method="post" class="d-grid gap-3">
+        <div asp-validation-summary="ModelOnly" class="text-danger"></div>
+
+        <div>
+            <label asp-for="Input.Title" class="form-label">Title</label>
+            <input asp-for="Input.Title" class="form-control" />
+            <span asp-validation-for="Input.Title" class="text-danger"></span>
+        </div>
+
+        <div>
+            <label asp-for="Input.OriginalDescription" class="form-label">Original description</label>
+            <textarea asp-for="Input.OriginalDescription" class="form-control" rows="4"></textarea>
+            <span asp-validation-for="Input.OriginalDescription" class="text-danger"></span>
+        </div>
+
+        <div>
+            <label asp-for="Input.ProjectRequest" class="form-label">Project request</label>
+            <textarea asp-for="Input.ProjectRequest" class="form-control" rows="4"></textarea>
+            <span asp-validation-for="Input.ProjectRequest" class="text-danger"></span>
+        </div>
+
+        <div>
+            <label asp-for="Input.SituationDescription" class="form-label">Situation description</label>
+            <textarea asp-for="Input.SituationDescription" class="form-control" rows="4"></textarea>
+            <span asp-validation-for="Input.SituationDescription" class="text-danger"></span>
+        </div>
+
+        <div>
+            <label asp-for="Input.ChangeSource" class="form-label">Change source</label>
+            <input asp-for="Input.ChangeSource" class="form-control" />
+            <span asp-validation-for="Input.ChangeSource" class="text-danger"></span>
+        </div>
+
+        <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary">Save analysis</button>
+            <a asp-page="/Analyses/Index" class="btn btn-outline-secondary">Cancel</a>
+        </div>
+    </form>
+</section>
