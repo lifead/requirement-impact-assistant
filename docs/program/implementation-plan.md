@@ -491,31 +491,46 @@ Done:
 
 Цель: ввести интерфейс `IAiAnalysisEngine`, описать внутренний контракт интеллектуального анализа и сбор входного snapshot.
 
+Зависимости: Task 10.
+
 Входит:
 
 - `IAiAnalysisEngine` как application-level boundary для интеллектуального анализа;
-- структура запроса;
-- input snapshot;
-- структура ожидаемого результата;
+- provider-independent request/response contract, пригодный и для DeepSeek, и для demo/mock provider;
+- структура запроса на основе сохраненного анализа и его контекста;
+- request assembly из `Analysis` и связанных `ContextFragment`;
+- input snapshot как стабильное сериализуемое представление входных данных;
+- включение только данных, явно введенных или загруженных пользователем в конкретный анализ;
+- структура ожидаемого результата без конкретной LLM/provider response schema;
 - marker, что результат является preliminary analytical material;
-- указание, что LLM не принимает решение.
-- provider-independent contract, пригодный и для DeepSeek, и для demo/mock provider.
+- указание, что LLM/AI не принимает управленческое решение;
 - правило, что UI, controllers, pages и бизнес-логика не вызывают LLM напрямую.
 
 Не входит:
 
 - конкретная реализация analysis engine;
 - конкретная реализация provider;
-- UI запуска анализа.
+- `DirectLlmAnalysisEngine`;
+- prompt generation;
+- вызов внешней LLM или внешнего AI/RAG-движка;
+- retry, streaming, provider configuration;
+- сохранение `AiAnalysisResult`;
+- UI запуска анализа;
+- изменение статуса анализа;
+- RAG, embeddings, поиск по контексту или интеграции.
 
 Проверки:
 
 - unit tests request snapshot;
 - unit tests no external data beyond user-provided context.
+- unit tests, что request assembly включает контекст только текущего анализа;
+- unit tests, что contract не содержит зависимостей от конкретного provider SDK;
+- `dotnet test`.
 
 Done:
 
-- приложение может построить воспроизводимый запрос для интеллектуального анализа и вызвать его только через `IAiAnalysisEngine`.
+- приложение может построить воспроизводимый provider-independent запрос для интеллектуального анализа.
+- в коде есть application-level boundary, через который будущие реализации analysis engine будут вызываться без прямого LLM-вызова из UI/pages/business logic.
 
 ### Task 12. DirectLlmAnalysisEngine и provider configuration
 
