@@ -19,6 +19,11 @@
             </div>
             <div class="d-flex align-items-center gap-2">
                 <span class="badge text-bg-secondary">@Model.Analysis.Status</span>
+                <a class="btn btn-outline-secondary btn-sm"
+                   asp-page="/Analyses/Review"
+                   asp-route-id="@Model.Analysis.Id">
+                    Review input
+                </a>
                 <a class="btn btn-outline-primary btn-sm"
                    asp-page="/Analyses/Edit"
                    asp-route-id="@Model.Analysis.Id">

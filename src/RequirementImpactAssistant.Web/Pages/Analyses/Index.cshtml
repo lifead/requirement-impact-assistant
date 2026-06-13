@@ -39,6 +39,11 @@
                             <td>@analysis.Status</td>
                             <td>@analysis.UpdatedAt.ToLocalTime().ToString("g")</td>
                             <td class="text-end">
+                                <a class="btn btn-outline-secondary btn-sm"
+                                   asp-page="/Analyses/Review"
+                                   asp-route-id="@analysis.Id">
+                                    Review input
+                                </a>
                                 <a class="btn btn-outline-primary btn-sm"
                                    asp-page="/Analyses/Details"
                                    asp-route-id="@analysis.Id">
