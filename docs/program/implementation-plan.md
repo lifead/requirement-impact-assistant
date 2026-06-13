@@ -933,25 +933,50 @@ Done:
 
 Цель: сформировать структурированный экспорт для главы 4.
 
+Зависимости:
+
+- Task 18;
+- Task 19 как реализованный UI/export pattern, если JSON export использует тот же экран анализа и DI-подход;
+- Task 20 должна быть реализуема и проверяема без DeepSeek API key, user secrets и network access.
+
 Входит:
 
+- серверный экспорт JSON из сохраненного анализа;
+- возможность скачать/сохранить `.json` файл из UI анализа;
+- JSON доступен только для анализа с сохраненным `ExpertConclusion`;
 - stable top-level fields: `metadata`, `input`, `contextFragments`, `aiAnalysisResult`, `impactMap`, `expertEvaluation`, `expertConclusion`, `exportMetadata`;
-- стабильные id элементов карты влияния;
-- expert marks;
-- missed items;
-- corrections;
-- conclusion rationale.
+- в `metadata`: `id`, `title`, `status`, `createdAt`, `updatedAt`, `fixedAt` при наличии;
+- в `input`: `originalDescription`/`originalRequirement`, `projectRequest`/`proposedChange`, `situationDescription`, `changeSource`;
+- в `aiAnalysisResult`: `status`, `generatedAt`, `engineName`, `providerName`, `modelName`, `promptVersion`, `inputSnapshot`, `rawResponse`/`errorMessage` при наличии;
+- в `impactMap`: все секции карты влияния со стабильными id элементов;
+- в `expertEvaluation`: `contextSufficiency`, `resultUsefulness`, `generalComment`, expert marks, missed items, corrections;
+- в `expertConclusion`: `conclusionType`, `comment`, `rationale`, `fixedAt`;
+- в `exportMetadata`: `exportedAt`, format/version, boundary notice о том, что LLM сформировала предварительный аналитический материал и не принимает управленческое решение.
 
 Не входит:
 
+- Markdown export changes, кроме минимальной переиспользуемой инфраструктуры при необходимости;
+- PDF export;
 - отдельная опубликованная JSON Schema;
-- аналитический dashboard.
+- аналитический dashboard или расчеты/визуализации главы 4;
+- защита evaluated/exported snapshots и запрет повторного анализа, потому что это scope Task 21;
+- вызов `IAiAnalysisEngine`, LLM provider, DeepSeek, внешних сервисов или сети.
+
+Границы:
+
+- Task 20 не вызывает `IAiAnalysisEngine`, LLM provider или внешние сервисы;
+- JSON export формируется только из уже сохраненных данных анализа;
+- если фиксируется факт экспорта или статус `Exported`, это минимальный маркер для будущей Task 21, без полноценной snapshot protection;
+- Task 20 не реализует защиту воспроизводимости и не запрещает повторный анализ.
 
 Проверки:
 
-- JSON shape test;
+- JSON shape test на stable top-level fields;
 - parse exported file;
-- check required chapter 4 fields.
+- test export is unavailable without expert conclusion;
+- test required chapter 4 fields: stable impact item ids, expert marks, missed items, corrections, conclusion rationale;
+- test export does not require DeepSeek API key, user secrets or network access;
+- manual export/open.
 
 Done:
 
