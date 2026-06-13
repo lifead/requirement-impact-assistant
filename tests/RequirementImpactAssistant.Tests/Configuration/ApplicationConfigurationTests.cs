@@ -1,5 +1,8 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using RequirementImpactAssistant.Web.Application.Analysis;
+using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Extensions;
 
@@ -31,6 +34,53 @@ public sealed class ApplicationConfigurationTests
         Assert.DoesNotContain("Pwd=", connectionString, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("User Id=", connectionString, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Uid=", connectionString, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Configuration_LoadsAiAnalysisProviderSelection()
+    {
+        var configuration = CreateApplicationConfiguration();
+        var services = new ServiceCollection();
+        services.AddApplicationAnalysis(configuration);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        var options = serviceProvider.GetRequiredService<IOptions<AiAnalysisOptions>>().Value;
+
+        Assert.Equal(LlmProviderNames.DeepSeek, options.Provider);
+        Assert.Equal("deepseek-chat", options.DeepSeek.Model);
+        Assert.Equal("https://api.deepseek.com", options.DeepSeek.BaseUrl);
+        Assert.Null(options.DeepSeek.ApiKey);
+    }
+
+    [Fact]
+    public void AiAnalysisConfiguration_DoesNotContainProviderSecrets()
+    {
+        var configuration = CreateApplicationConfiguration();
+
+        var keys = configuration
+            .AsEnumerable()
+            .Select(pair => pair.Key)
+            .ToList();
+
+        Assert.DoesNotContain(keys, key => key.Contains("ApiKey", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(keys, key => key.Contains("Secret", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(keys, key => key.Contains("Token", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void ApplicationAnalysisRegistration_UsesDirectEngineAndExternalProviderBoundary()
+    {
+        var configuration = CreateApplicationConfiguration();
+        var services = new ServiceCollection();
+        services.AddSingleton<ILlmProvider, NoopLlmProvider>();
+
+        services.AddApplicationAnalysis(configuration);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+        var engine = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngine>();
+
+        Assert.IsType<DirectLlmAnalysisEngine>(engine);
     }
 
     [Fact]
@@ -76,6 +126,18 @@ public sealed class ApplicationConfigurationTests
 
         Assert.NotNull(dbContext);
         Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite", dbContext.Database.ProviderName);
+    }
+
+    private sealed class NoopLlmProvider : ILlmProvider
+    {
+        public Task<LlmProviderResponse> CompleteAsync(
+            LlmProviderRequest request,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(new LlmProviderResponse(
+                LlmProviderResponseStatus.Failed,
+                ImpactMap: null,
+                RawResponse: string.Empty,
+                Errors: ["No provider implementation is registered in this configuration test."]));
     }
 
     private static IConfigurationRoot CreateApplicationConfiguration()
