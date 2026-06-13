@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Data;
@@ -39,6 +40,19 @@ public static class ServiceCollectionExtensions
                 "DeepSeek model is required when DeepSeek provider is selected.");
 
         services.AddScoped<IAiAnalysisEngine, DirectLlmAnalysisEngine>();
+        services.TryAddScoped<DemoLlmProvider>();
+        services.TryAddScoped<ILlmProvider>(serviceProvider =>
+        {
+            var options = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<AiAnalysisOptions>>().Value;
+
+            if (string.Equals(options.Provider, LlmProviderNames.Demo, StringComparison.OrdinalIgnoreCase))
+            {
+                return serviceProvider.GetRequiredService<DemoLlmProvider>();
+            }
+
+            throw new InvalidOperationException(
+                $"LLM provider '{options.Provider}' is configured, but no provider implementation is registered for it.");
+        });
 
         return services;
     }

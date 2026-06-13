@@ -46,7 +46,7 @@ public sealed class ApplicationConfigurationTests
         using var serviceProvider = services.BuildServiceProvider();
         var options = serviceProvider.GetRequiredService<IOptions<AiAnalysisOptions>>().Value;
 
-        Assert.Equal(LlmProviderNames.DeepSeek, options.Provider);
+        Assert.Equal(LlmProviderNames.Demo, options.Provider);
         Assert.Equal("deepseek-chat", options.DeepSeek.Model);
         Assert.Equal("https://api.deepseek.com", options.DeepSeek.BaseUrl);
         Assert.Null(options.DeepSeek.ApiKey);
@@ -81,6 +81,30 @@ public sealed class ApplicationConfigurationTests
         var engine = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngine>();
 
         Assert.IsType<DirectLlmAnalysisEngine>(engine);
+    }
+
+    [Fact]
+    public void ApplicationAnalysisRegistration_ThrowsForProviderWithoutImplementation()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiAnalysis:Provider"] = LlmProviderNames.DeepSeek,
+                ["AiAnalysis:DeepSeek:Model"] = "deepseek-chat"
+            })
+            .Build();
+        var services = new ServiceCollection();
+
+        services.AddApplicationAnalysis(configuration);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => scope.ServiceProvider.GetRequiredService<ILlmProvider>());
+
+        Assert.Contains("DeepSeek", exception.Message);
+        Assert.Contains("no provider implementation is registered", exception.Message);
     }
 
     [Fact]
