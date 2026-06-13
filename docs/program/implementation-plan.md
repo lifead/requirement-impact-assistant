@@ -1031,6 +1031,12 @@ Done:
 
 Цель: проверить полный MVP-сценарий.
 
+Зависимости:
+
+- Task 16, Task 17, Task 18, Task 19, Task 20 и Task 21;
+- Task 14/DeepSeek не является зависимостью для Task 22;
+- Task 22 должна быть реализуема и проверяема без DeepSeek API key, user secrets и network access.
+
 Входит:
 
 - подготовленный обезличенный кейс;
@@ -1046,11 +1052,25 @@ Done:
 
 - промышленные интеграционные тесты;
 - нагрузочное тестирование;
-- dashboard главы 4.
+- dashboard главы 4;
+- вызов DeepSeek, внешних LLM provider-ов, внешних сервисов или сети;
+- изменение бизнес-логики анализа, экспертной оценки, экспертного заключения, Markdown/JSON export и snapshot protection;
+- Playwright/browser E2E framework, новая test infrastructure или production integration tests без отдельного согласования.
+
+Границы:
+
+- smoke scenario использует только `DirectLlmAnalysisEngine` с demo provider;
+- для ручного запуска явно используется Development/config override с `AiAnalysis:Provider=Demo`;
+- Task 22 не вызывает DeepSeek, внешние LLM provider-ы, внешние сервисы или сеть;
+- Task 22 не меняет бизнес-логику анализа, экспертной оценки, экспертного заключения, Markdown/JSON export и snapshot protection;
+- если выбран documented smoke checklist, он должен фиксировать подготовленный обезличенный кейс, шаги, ожидаемые статусы/результаты и команды проверки;
+- если выбран automated smoke test, он должен использовать существующий test project, локальную/временную SQLite-базу и demo provider.
 
 Проверки:
 
-- documented smoke checklist или automated smoke test;
+- documented smoke checklist в `docs/...` или automated smoke test в существующем test project;
+- проверка полного пути: создание анализа -> контекст -> demo AI analysis -> экспертная оценка -> экспертное заключение -> Markdown export -> JSON export;
+- проверка, что сценарий не требует DeepSeek API key, user secrets или network access;
 - `dotnet build`;
 - `dotnet test`.
 
