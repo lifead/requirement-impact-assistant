@@ -67,9 +67,29 @@ public sealed class ApplicationConfigurationTests
         Assert.Contains("Connection string 'ApplicationDb' is not configured.", exception.Message);
     }
 
+    [Fact]
+    public void DesignTimeFactory_CreatesSqliteApplicationDbContext()
+    {
+        var factory = new ApplicationDbContextFactory(GetWebProjectPath);
+
+        using var dbContext = factory.CreateDbContext([]);
+
+        Assert.NotNull(dbContext);
+        Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite", dbContext.Database.ProviderName);
+    }
+
     private static IConfigurationRoot CreateApplicationConfiguration()
     {
-        var webProjectPath = Path.GetFullPath(Path.Combine(
+        return new ConfigurationBuilder()
+            .SetBasePath(GetWebProjectPath())
+            .AddJsonFile("appsettings.json", optional: false)
+            .AddJsonFile("appsettings.Development.json", optional: false)
+            .Build();
+    }
+
+    private static string GetWebProjectPath()
+    {
+        return Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory,
             "..",
             "..",
@@ -78,11 +98,5 @@ public sealed class ApplicationConfigurationTests
             "..",
             "src",
             "RequirementImpactAssistant.Web"));
-
-        return new ConfigurationBuilder()
-            .SetBasePath(webProjectPath)
-            .AddJsonFile("appsettings.json", optional: false)
-            .AddJsonFile("appsettings.Development.json", optional: false)
-            .Build();
     }
 }
