@@ -439,6 +439,52 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
+    public async Task ReviewPage_RunAnalysisHandlerSurfacesSnapshotLockedMessageOnDetailsRedirect()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = new CapturingAnalysisExecutionService(new AnalysisExecutionOutcome(
+                    AnalysisExecutionOutcomeKind.SnapshotLocked,
+                    analysis.Id,
+                    AiAnalysisResultStatus.Completed,
+                    "AI analysis rerun is blocked because an expert evaluation has been saved. The saved AI analysis result was not changed."));
+                var pageModel = new ReviewModel(dbContext, service);
+
+                var result = await pageModel.OnPostRunAnalysisAsync(analysis.Id);
+                var redirect = Assert.IsType<RedirectToPageResult>(result);
+
+                Assert.Equal(analysis.Id, service.LastAnalysisId);
+                Assert.Equal(1, service.CallCount);
+                Assert.Equal("/Analyses/Details", redirect.PageName);
+                Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
+                Assert.Contains("blocked", pageModel.AnalysisRunMessage, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("not changed", pageModel.AnalysisRunMessage, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task ReviewPage_RunAnalysisHandlerStaysOnReviewWhenServiceReportsInvalidInput()
     {
         var databasePath = CreateDatabasePath();

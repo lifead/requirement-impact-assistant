@@ -22,5 +22,6 @@ public enum AnalysisExecutionOutcomeKind
 {
     Completed = 1,
     NotFound = 2,
-    InvalidInput = 3
+    InvalidInput = 3,
+    SnapshotLocked = 4
 }

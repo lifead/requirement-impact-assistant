@@ -252,7 +252,7 @@ public sealed class AnalysisExecutionServiceTests
     }
 
     [Fact]
-    public async Task RunAsync_OverwritesExistingAiAnalysisResultBeforeSnapshotProtectionExists()
+    public async Task RunAsync_OverwritesExistingAiAnalysisResultBeforeExpertEvaluation()
     {
         var databasePath = CreateDatabasePath();
 
@@ -314,6 +314,169 @@ public sealed class AnalysisExecutionServiceTests
         }
     }
 
+    [Fact]
+    public async Task RunAsync_AfterExpertEvaluationDoesNotCallEngineAndKeepsExistingAiAnalysisResult()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis("Gateway migration");
+            var generatedAt = new DateTimeOffset(2026, 06, 13, 10, 00, 00, TimeSpan.Zero);
+            analysis.AiAnalysisResult = CreateExistingAiAnalysisResult(analysis.Id, generatedAt);
+            analysis.ExpertEvaluation = new ExpertEvaluation
+            {
+                AnalysisId = analysis.Id,
+                ContextSufficiency = ContextSufficiencyRating.Sufficient,
+                ResultUsefulness = ResultUsefulnessRating.Useful,
+                GeneralComment = "Expert evaluation saved."
+            };
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            var assembler = new CapturingAssembler();
+            var engine = new StubAiAnalysisEngine(new AiAnalysisResponse(
+                AiAnalysisResponseStatus.Succeeded,
+                CreateImpactMap(),
+                "new raw response",
+                [],
+                AnalysisBoundaryNotice.Default));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(dbContext, assembler, engine);
+
+                var outcome = await service.RunAsync(analysis.Id);
+
+                Assert.Equal(AnalysisExecutionOutcomeKind.SnapshotLocked, outcome.Kind);
+                Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
+                Assert.Contains("expert evaluation", outcome.Message, StringComparison.OrdinalIgnoreCase);
+            }
+
+            Assert.Equal(0, assembler.CallCount);
+            Assert.Equal(0, engine.CallCount);
+
+            await AssertExistingAiAnalysisResultUnchangedAsync(options, analysis.Id, generatedAt);
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_AfterExpertConclusionDoesNotCallEngineAndKeepsExistingAiAnalysisResult()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis("Gateway migration");
+            var generatedAt = new DateTimeOffset(2026, 06, 13, 10, 00, 00, TimeSpan.Zero);
+            analysis.AiAnalysisResult = CreateExistingAiAnalysisResult(analysis.Id, generatedAt);
+            analysis.ExpertConclusion = new ExpertConclusion
+            {
+                AnalysisId = analysis.Id,
+                ConclusionType = ExpertConclusionType.AcceptWithLimitations,
+                Comment = "Human expert conclusion.",
+                Rationale = "Accepted with rollout constraints.",
+                FixedAt = generatedAt.AddMinutes(30)
+            };
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            var assembler = new CapturingAssembler();
+            var engine = new StubAiAnalysisEngine(new AiAnalysisResponse(
+                AiAnalysisResponseStatus.Succeeded,
+                CreateImpactMap(),
+                "new raw response",
+                [],
+                AnalysisBoundaryNotice.Default));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(dbContext, assembler, engine);
+
+                var outcome = await service.RunAsync(analysis.Id);
+
+                Assert.Equal(AnalysisExecutionOutcomeKind.SnapshotLocked, outcome.Kind);
+                Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
+                Assert.Contains("expert conclusion", outcome.Message, StringComparison.OrdinalIgnoreCase);
+            }
+
+            Assert.Equal(0, assembler.CallCount);
+            Assert.Equal(0, engine.CallCount);
+
+            await AssertExistingAiAnalysisResultUnchangedAsync(options, analysis.Id, generatedAt);
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_AfterExportedMarkerDoesNotCallEngineAndKeepsExistingAiAnalysisResult()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis("Gateway migration");
+            var generatedAt = new DateTimeOffset(2026, 06, 13, 10, 00, 00, TimeSpan.Zero);
+            analysis.Status = AnalysisStatus.Exported;
+            analysis.AiAnalysisResult = CreateExistingAiAnalysisResult(analysis.Id, generatedAt);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            var assembler = new CapturingAssembler();
+            var engine = new StubAiAnalysisEngine(new AiAnalysisResponse(
+                AiAnalysisResponseStatus.Succeeded,
+                CreateImpactMap(),
+                "new raw response",
+                [],
+                AnalysisBoundaryNotice.Default));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(dbContext, assembler, engine);
+
+                var outcome = await service.RunAsync(analysis.Id);
+
+                Assert.Equal(AnalysisExecutionOutcomeKind.SnapshotLocked, outcome.Kind);
+                Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
+                Assert.Contains("exported", outcome.Message, StringComparison.OrdinalIgnoreCase);
+            }
+
+            Assert.Equal(0, assembler.CallCount);
+            Assert.Equal(0, engine.CallCount);
+
+            await AssertExistingAiAnalysisResultUnchangedAsync(options, analysis.Id, generatedAt);
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
     private static AnalysisExecutionService CreateService(
         ApplicationDbContext dbContext,
         IAnalysisInputAssembler assembler,
@@ -351,6 +514,48 @@ public sealed class AnalysisExecutionServiceTests
         risk.Severity = ImpactSeverity.Medium;
 
         return impactMap;
+    }
+
+    private static AiAnalysisResult CreateExistingAiAnalysisResult(
+        Guid analysisId,
+        DateTimeOffset generatedAt) =>
+        new()
+        {
+            AnalysisId = analysisId,
+            Status = AiAnalysisResultStatus.Completed,
+            GeneratedAt = generatedAt,
+            EngineName = "previous-engine",
+            ProviderName = "previous-provider",
+            ModelName = "previous-model",
+            PromptVersion = "previous-prompt",
+            InputSnapshot = "previous input snapshot",
+            RawResponse = "previous raw response",
+            ErrorMessage = "previous diagnostics",
+            ImpactMap = CreateImpactMap()
+        };
+
+    private static async Task AssertExistingAiAnalysisResultUnchangedAsync(
+        DbContextOptions<ApplicationDbContext> options,
+        Guid analysisId,
+        DateTimeOffset generatedAt)
+    {
+        await using var dbContext = new ApplicationDbContext(options);
+        var saved = await dbContext.Analyses
+            .Include(candidate => candidate.AiAnalysisResult)
+            .SingleAsync(candidate => candidate.Id == analysisId);
+
+        Assert.NotNull(saved.AiAnalysisResult);
+        Assert.Equal(AiAnalysisResultStatus.Completed, saved.AiAnalysisResult.Status);
+        Assert.Equal(generatedAt, saved.AiAnalysisResult.GeneratedAt);
+        Assert.Equal("previous-engine", saved.AiAnalysisResult.EngineName);
+        Assert.Equal("previous-provider", saved.AiAnalysisResult.ProviderName);
+        Assert.Equal("previous-model", saved.AiAnalysisResult.ModelName);
+        Assert.Equal("previous-prompt", saved.AiAnalysisResult.PromptVersion);
+        Assert.Equal("previous input snapshot", saved.AiAnalysisResult.InputSnapshot);
+        Assert.Equal("previous raw response", saved.AiAnalysisResult.RawResponse);
+        Assert.Equal("previous diagnostics", saved.AiAnalysisResult.ErrorMessage);
+        Assert.NotNull(saved.AiAnalysisResult.ImpactMap);
+        Assert.Equal("Potential migration impact", saved.AiAnalysisResult.ImpactMap.ChangeSummary.Title);
     }
 
     private static Analysis CreateAnalysis(string title) =>

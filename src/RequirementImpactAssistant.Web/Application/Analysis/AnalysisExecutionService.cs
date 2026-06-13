@@ -36,6 +36,8 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
         var analysis = await _dbContext.Analyses
             .Include(candidate => candidate.ContextFragments)
             .Include(candidate => candidate.AiAnalysisResult)
+            .Include(candidate => candidate.ExpertEvaluation)
+            .Include(candidate => candidate.ExpertConclusion)
             .SingleOrDefaultAsync(candidate => candidate.Id == analysisId, cancellationToken)
             .ConfigureAwait(false);
 
@@ -46,6 +48,15 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
                 analysisId,
                 ResultStatus: null,
                 Message: "Analysis was not found.");
+        }
+
+        if (IsSnapshotLocked(analysis))
+        {
+            return new AnalysisExecutionOutcome(
+                AnalysisExecutionOutcomeKind.SnapshotLocked,
+                analysis.Id,
+                analysis.AiAnalysisResult?.Status,
+                CreateSnapshotLockedMessage(analysis));
         }
 
         if (!HasMinimumInput(analysis))
@@ -106,6 +117,11 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
         !string.IsNullOrWhiteSpace(analysis.SituationDescription) &&
         !string.IsNullOrWhiteSpace(analysis.ChangeSource);
 
+    private static bool IsSnapshotLocked(DomainAnalysis analysis) =>
+        analysis.ExpertEvaluation is not null ||
+        analysis.ExpertConclusion is not null ||
+        analysis.Status == AnalysisStatus.Exported;
+
     private static AiAnalysisResultStatus MapResultStatus(AiAnalysisResponse response) =>
         response.Status switch
         {
@@ -144,4 +160,15 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
             AiAnalysisResultStatus.Failed => "AI analysis failed. Diagnostics were saved.",
             _ => "AI analysis finished."
         };
+
+    private static string CreateSnapshotLockedMessage(DomainAnalysis analysis)
+    {
+        var reason = analysis.ExpertConclusion is not null
+            ? "an expert conclusion has been saved"
+            : analysis.ExpertEvaluation is not null
+                ? "an expert evaluation has been saved"
+                : "the analysis has been exported";
+
+        return $"AI analysis rerun is blocked because {reason}. The saved AI analysis result was not changed.";
+    }
 }
