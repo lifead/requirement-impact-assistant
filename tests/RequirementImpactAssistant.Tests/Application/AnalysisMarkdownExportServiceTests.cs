@@ -168,6 +168,48 @@ public sealed class AnalysisMarkdownExportServiceTests
     }
 
     [Fact]
+    public async Task ExportAsync_ExportsLegacyMvp0ResultMetadataWithDirectLlmFallbacks()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysisGraph(includeStage1Metadata: false);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = new AnalysisMarkdownExportService(dbContext);
+
+                var result = await service.ExportAsync(analysis.Id, DateTimeOffset.UtcNow);
+
+                Assert.Equal(AnalysisMarkdownExportResultKind.Exported, result.Kind);
+                Assert.Contains("## Analysis result metadata", result.Markdown);
+                Assert.Contains("- **Analysis mode:** DirectLlm", result.Markdown);
+                Assert.Contains("- **Engine:** demo-engine", result.Markdown);
+                Assert.Contains("- **Provider:** demo-provider", result.Markdown);
+                Assert.Contains("- **Adapter:** Not provided", result.Markdown);
+                Assert.Contains("- **Model workflow profile:** demo-model", result.Markdown);
+                Assert.Contains("- **Manual context forwarded to external AI or RAG:** False", result.Markdown);
+                Assert.Contains("- **Retrieved context state:** Unavailable", result.Markdown);
+                Assert.Contains("No warnings were saved.", result.Markdown);
+                Assert.DoesNotContain("Retrieved context items", result.Markdown);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task DetailsPage_ExportsMarkdownFileFromUiHandler()
     {
         var databasePath = CreateDatabasePath();
@@ -211,6 +253,17 @@ public sealed class AnalysisMarkdownExportServiceTests
         Assert.Contains("## Export metadata", markdown);
         Assert.Contains("- **Exported at:** 2026-06-13 14:15:16 UTC", markdown);
         Assert.Contains("- **Analysis status:** ExpertConclusionFixed", markdown);
+        Assert.Contains("## Analysis result metadata", markdown);
+        Assert.Contains("- **Analysis mode:** DirectLlm", markdown);
+        Assert.Contains("- **Engine:** direct-llm-engine", markdown);
+        Assert.Contains("- **Provider:** direct-provider", markdown);
+        Assert.Contains("- **Adapter:** Not provided", markdown);
+        Assert.Contains("- **Model workflow profile:** demo-deterministic", markdown);
+        Assert.Contains("- **Manual context forwarded to external AI or RAG:** False", markdown);
+        Assert.Contains("- **Retrieved context state:** Unavailable", markdown);
+        Assert.Contains("### Warnings", markdown);
+        Assert.Contains("- Saved warning from direct LLM metadata.", markdown);
+        Assert.DoesNotContain("Retrieved context items", markdown);
         Assert.Contains("## Input", markdown);
         Assert.Contains("**Original requirement:**", markdown);
         Assert.Contains("Change payment API response.", markdown);
@@ -252,7 +305,7 @@ public sealed class AnalysisMarkdownExportServiceTests
             .UseSqlite($"Data Source={databasePath}")
             .Options;
 
-    private static Analysis CreateAnalysisGraph()
+    private static Analysis CreateAnalysisGraph(bool includeStage1Metadata = true)
     {
         var analysisId = Guid.NewGuid();
         var fixedAt = new DateTimeOffset(2026, 06, 13, 12, 30, 0, TimeSpan.Zero);
@@ -368,6 +421,15 @@ public sealed class AnalysisMarkdownExportServiceTests
             }
         };
         analysis.ContextFragments.Add(fragment);
+
+        if (includeStage1Metadata)
+        {
+            analysis.AiAnalysisResult.Metadata = AiAnalysisResultMetadata.CreateDefaultDirectLlm(
+                "direct-llm-engine",
+                "direct-provider",
+                "demo-deterministic",
+                ["Saved warning from direct LLM metadata."]);
+        }
 
         return analysis;
     }
