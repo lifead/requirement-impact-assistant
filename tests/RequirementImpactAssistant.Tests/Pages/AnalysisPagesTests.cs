@@ -2538,6 +2538,14 @@ public sealed class AnalysisPagesTests
             Guid analysisId,
             CancellationToken cancellationToken = default)
         {
+            return RunAsync(analysisId, AnalysisMode.DirectLlm, cancellationToken);
+        }
+
+        public Task<AnalysisExecutionOutcome> RunAsync(
+            Guid analysisId,
+            AnalysisMode analysisMode,
+            CancellationToken cancellationToken = default)
+        {
             CallCount++;
             LastAnalysisId = analysisId;
 

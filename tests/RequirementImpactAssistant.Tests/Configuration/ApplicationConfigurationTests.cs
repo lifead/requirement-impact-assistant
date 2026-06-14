@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Data;
+using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Extensions;
 
 namespace RequirementImpactAssistant.Tests.Configuration;
@@ -80,8 +81,12 @@ public sealed class ApplicationConfigurationTests
         using var serviceProvider = services.BuildServiceProvider();
         using var scope = serviceProvider.CreateScope();
         var engine = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngine>();
+        var selector = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngineSelector>();
 
         Assert.IsType<DirectLlmAnalysisEngine>(engine);
+        Assert.IsType<DirectLlmAnalysisEngine>(selector.Select(AnalysisMode.DirectLlm));
+        Assert.IsType<ExternalRagAnalysisEngine>(selector.Select(AnalysisMode.ExternalRag));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IAnalysisExecutionService));
     }
 
     [Fact]

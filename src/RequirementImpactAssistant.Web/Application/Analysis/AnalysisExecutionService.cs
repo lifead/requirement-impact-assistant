@@ -14,23 +14,30 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IAnalysisInputAssembler _inputAssembler;
-    private readonly IAiAnalysisEngine _analysisEngine;
+    private readonly IAiAnalysisEngineSelector _analysisEngineSelector;
     private readonly AiAnalysisOptions _options;
 
     public AnalysisExecutionService(
         ApplicationDbContext dbContext,
         IAnalysisInputAssembler inputAssembler,
-        IAiAnalysisEngine analysisEngine,
+        IAiAnalysisEngineSelector analysisEngineSelector,
         IOptions<AiAnalysisOptions> options)
     {
         _dbContext = dbContext;
         _inputAssembler = inputAssembler;
-        _analysisEngine = analysisEngine;
+        _analysisEngineSelector = analysisEngineSelector;
         _options = options.Value;
     }
 
     public async Task<AnalysisExecutionOutcome> RunAsync(
         Guid analysisId,
+        CancellationToken cancellationToken = default) =>
+        await RunAsync(analysisId, AnalysisMode.DirectLlm, cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<AnalysisExecutionOutcome> RunAsync(
+        Guid analysisId,
+        AnalysisMode analysisMode,
         CancellationToken cancellationToken = default)
     {
         var analysis = await _dbContext.Analyses
@@ -70,7 +77,8 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
         }
 
         var request = _inputAssembler.Assemble(analysis);
-        var response = await _analysisEngine
+        var analysisEngine = _analysisEngineSelector.Select(analysisMode);
+        var response = await analysisEngine
             .AnalyzeAsync(request, cancellationToken)
             .ConfigureAwait(false);
 
@@ -79,7 +87,7 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
         {
             AnalysisId = analysis.Id
         };
-        var fallbackEngineName = _analysisEngine.GetType().Name;
+        var fallbackEngineName = analysisEngine.GetType().Name;
         var fallbackProviderName = _options.Provider;
         var fallbackModelName = ResolveModelName(_options);
         var resultMetadata = response.ResultMetadata

@@ -7,6 +7,11 @@ public interface IAnalysisExecutionService
     Task<AnalysisExecutionOutcome> RunAsync(
         Guid analysisId,
         CancellationToken cancellationToken = default);
+
+    Task<AnalysisExecutionOutcome> RunAsync(
+        Guid analysisId,
+        AnalysisMode analysisMode,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed record AnalysisExecutionOutcome(

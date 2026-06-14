@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using RequirementImpactAssistant.Web.Application.Analysis;
+using RequirementImpactAssistant.Web.Application.Analysis.External;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Application.Export;
 using RequirementImpactAssistant.Web.Data;
@@ -45,7 +46,12 @@ public static class ServiceCollectionExtensions
                     || !string.IsNullOrWhiteSpace(options.DeepSeek.Model),
                 "DeepSeek model is required when DeepSeek provider is selected.");
 
-        services.AddScoped<IAiAnalysisEngine, DirectLlmAnalysisEngine>();
+        services.AddScoped<DirectLlmAnalysisEngine>();
+        services.AddScoped<ExternalRagAnalysisEngine>(serviceProvider =>
+            new ExternalRagAnalysisEngine(serviceProvider.GetService<IExternalRagAdapter>()));
+        services.AddScoped<IAiAnalysisEngine>(serviceProvider =>
+            serviceProvider.GetRequiredService<DirectLlmAnalysisEngine>());
+        services.AddScoped<IAiAnalysisEngineSelector, AiAnalysisEngineSelector>();
         services.AddScoped<IAnalysisExecutionService, AnalysisExecutionService>();
         services.AddScoped<IAnalysisInputAssembler, AnalysisInputAssembler>();
         services.TryAddScoped<DemoLlmProvider>();

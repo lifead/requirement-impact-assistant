@@ -280,6 +280,124 @@ public sealed class AnalysisExecutionServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_DefaultExecutionSelectsDirectLlmMode()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis("Gateway migration");
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            var directEngine = new StubAiAnalysisEngine(new AiAnalysisResponse(
+                AiAnalysisResponseStatus.Succeeded,
+                CreateImpactMap(),
+                "direct raw response",
+                [],
+                AnalysisBoundaryNotice.Default));
+            var externalEngine = new StubAiAnalysisEngine(new AiAnalysisResponse(
+                AiAnalysisResponseStatus.Failed,
+                null,
+                "external raw response",
+                ["external should not be selected"],
+                AnalysisBoundaryNotice.Default));
+            var selector = new ModeAwareAiAnalysisEngineSelector(directEngine, externalEngine);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(dbContext, new CapturingAssembler(), selector);
+
+                var outcome = await service.RunAsync(analysis.Id);
+
+                Assert.True(outcome.Succeeded);
+                Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
+            }
+
+            Assert.Equal([AnalysisMode.DirectLlm], selector.SelectedModes);
+            Assert.Equal(1, directEngine.CallCount);
+            Assert.Equal(0, externalEngine.CallCount);
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_ExternalRagModeSelectsExternalEngineAndPersistsUnavailableResultWithoutAdapter()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis("Gateway migration");
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            var directEngine = new StubAiAnalysisEngine(new AiAnalysisResponse(
+                AiAnalysisResponseStatus.Succeeded,
+                CreateImpactMap(),
+                "direct raw response",
+                [],
+                AnalysisBoundaryNotice.Default));
+            var externalEngine = new ExternalRagAnalysisEngine();
+            var selector = new ModeAwareAiAnalysisEngineSelector(directEngine, externalEngine);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(dbContext, new CapturingAssembler(), selector);
+
+                var outcome = await service.RunAsync(analysis.Id, AnalysisMode.ExternalRag);
+
+                Assert.True(outcome.Succeeded);
+                Assert.Equal(AiAnalysisResultStatus.Failed, outcome.ResultStatus);
+            }
+
+            Assert.Equal([AnalysisMode.ExternalRag], selector.SelectedModes);
+            Assert.Equal(0, directEngine.CallCount);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var savedResult = await dbContext.AiAnalysisResults
+                    .AsSplitQuery()
+                    .Include(candidate => candidate.Metadata.RetrievedContextItems)
+                    .SingleAsync(candidate => candidate.AnalysisId == analysis.Id);
+
+                Assert.Equal(AiAnalysisResultStatus.Failed, savedResult.Status);
+                Assert.Equal(nameof(ExternalRagAnalysisEngine), savedResult.EngineName);
+                Assert.Empty(savedResult.RawResponse);
+                Assert.Contains("adapter is not configured", savedResult.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+                Assert.Null(savedResult.ImpactMap);
+
+                var metadata = savedResult.Metadata;
+                Assert.Equal(AnalysisMode.ExternalRag, metadata.AnalysisMode);
+                Assert.Equal(nameof(ExternalRagAnalysisEngine), metadata.EngineName);
+                Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
+                Assert.False(metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Contains(metadata.Warnings, warning => warning.Contains("adapter is not configured", StringComparison.OrdinalIgnoreCase));
+                Assert.Empty(metadata.RetrievedContextItems);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_OverwritesExistingResultMetadataRetrievedContextItems()
     {
         var databasePath = CreateDatabasePath();
@@ -816,10 +934,19 @@ public sealed class AnalysisExecutionServiceTests
         ApplicationDbContext dbContext,
         IAnalysisInputAssembler assembler,
         IAiAnalysisEngine engine) =>
+        CreateService(
+            dbContext,
+            assembler,
+            new ModeAwareAiAnalysisEngineSelector(engine, engine));
+
+    private static AnalysisExecutionService CreateService(
+        ApplicationDbContext dbContext,
+        IAnalysisInputAssembler assembler,
+        IAiAnalysisEngineSelector analysisEngineSelector) =>
         new(
             dbContext,
             assembler,
-            engine,
+            analysisEngineSelector,
             Options.Create(new AiAnalysisOptions
             {
                 Provider = LlmProviderNames.Demo
@@ -969,6 +1096,25 @@ public sealed class AnalysisExecutionServiceTests
             LastRequest = request;
 
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class ModeAwareAiAnalysisEngineSelector(
+        IAiAnalysisEngine directLlmAnalysisEngine,
+        IAiAnalysisEngine externalRagAnalysisEngine) : IAiAnalysisEngineSelector
+    {
+        public List<AnalysisMode> SelectedModes { get; } = [];
+
+        public IAiAnalysisEngine Select(AnalysisMode analysisMode)
+        {
+            SelectedModes.Add(analysisMode);
+
+            return analysisMode switch
+            {
+                AnalysisMode.DirectLlm => directLlmAnalysisEngine,
+                AnalysisMode.ExternalRag => externalRagAnalysisEngine,
+                _ => throw new ArgumentOutOfRangeException(nameof(analysisMode), analysisMode, "Unsupported test analysis mode.")
+            };
         }
     }
 
