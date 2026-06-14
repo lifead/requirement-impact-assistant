@@ -68,6 +68,35 @@ public sealed class AnalysisJsonExportServiceTests
             Assert.Equal(
                 "requirement-impact-assistant.analysis-export",
                 document.RootElement.GetProperty("exportMetadata").GetProperty("format").GetString());
+
+            var aiAnalysisResult = document.RootElement.GetProperty("aiAnalysisResult");
+            Assert.Equal("demo-engine", aiAnalysisResult.GetProperty("engineName").GetString());
+            Assert.Equal("demo-provider", aiAnalysisResult.GetProperty("providerName").GetString());
+            Assert.Equal("demo-model", aiAnalysisResult.GetProperty("modelName").GetString());
+            Assert.Equal("mvp-v1", aiAnalysisResult.GetProperty("promptVersion").GetString());
+            Assert.Equal("{ \"request\": \"payment-api\" }", aiAnalysisResult.GetProperty("inputSnapshot").GetString());
+            Assert.Equal("{ \"status\": \"completed\" }", aiAnalysisResult.GetProperty("rawResponse").GetString());
+            Assert.Equal(JsonValueKind.Null, aiAnalysisResult.GetProperty("errorMessage").ValueKind);
+            Assert.Equal("DirectLlm", aiAnalysisResult.GetProperty("analysisMode").GetString());
+            Assert.Equal(
+                "demo-engine",
+                aiAnalysisResult.GetProperty("analysisEngine").GetProperty("name").GetString());
+            Assert.Equal(
+                "demo-provider",
+                aiAnalysisResult.GetProperty("provider").GetProperty("name").GetString());
+            Assert.Equal(JsonValueKind.Null, aiAnalysisResult.GetProperty("adapter").GetProperty("name").ValueKind);
+            Assert.Equal(
+                "demo-model",
+                aiAnalysisResult.GetProperty("modelWorkflowProfile").GetProperty("name").GetString());
+            Assert.False(
+                aiAnalysisResult.GetProperty("manualContextUsage").GetProperty("forwardedToExternalAiOrRag").GetBoolean());
+            Assert.Equal("Unavailable", aiAnalysisResult.GetProperty("retrievedContextState").GetString());
+            Assert.Equal(
+                "Retrieved context is unavailable for this saved analysis result.",
+                Assert.Single(aiAnalysisResult.GetProperty("retrievedContextLimitations").EnumerateArray()).GetString());
+            Assert.Empty(aiAnalysisResult.GetProperty("warnings").EnumerateArray());
+            Assert.False(aiAnalysisResult.TryGetProperty("retrievedContext", out _));
+            Assert.False(aiAnalysisResult.TryGetProperty("items", out _));
         }
         finally
         {
@@ -188,6 +217,73 @@ public sealed class AnalysisJsonExportServiceTests
             .ToArray();
 
         Assert.Equal(expectedRiskIds, riskIds);
+    }
+
+    [Fact]
+    public void Build_IncludesSavedExternalMetadataWithoutRetrievedContextItems()
+    {
+        var analysis = CreateAnalysisGraph();
+        analysis.AiAnalysisResult!.ErrorMessage = "Error message remains legacy error data, not a metadata warning.";
+        analysis.AiAnalysisResult.Metadata = new AiAnalysisResultMetadata
+        {
+            AnalysisMode = AnalysisMode.ExternalRag,
+            EngineName = "external-analysis-engine",
+            ProviderName = "neutral-provider",
+            AdapterName = "neutral-adapter",
+            ModelWorkflowProfileName = "impact-workflow-profile",
+            RetrievedContextState = RetrievedContextState.Partial,
+            ManualContextForwardedToExternalAiOrRag = true,
+            Warnings =
+            [
+                "Retrieved context is partial."
+            ],
+            RetrievedContextItems =
+            [
+                new RetrievedContextItem
+                {
+                    SourceTitle = "Out-of-scope Task 4 source title",
+                    Excerpt = "Out-of-scope Task 4 excerpt.",
+                    ProviderName = "neutral-provider",
+                    AdapterName = "neutral-adapter",
+                    Completeness = RetrievedContextItemCompleteness.ExcerptOnly
+                }
+            ]
+        };
+
+        var json = new AnalysisJsonReportBuilder().Build(analysis, DateTimeOffset.UtcNow);
+
+        using var document = JsonDocument.Parse(json);
+        var aiAnalysisResult = document.RootElement.GetProperty("aiAnalysisResult");
+
+        Assert.Equal("ExternalRag", aiAnalysisResult.GetProperty("analysisMode").GetString());
+        Assert.Equal(
+            "external-analysis-engine",
+            aiAnalysisResult.GetProperty("analysisEngine").GetProperty("name").GetString());
+        Assert.Equal(
+            "neutral-provider",
+            aiAnalysisResult.GetProperty("provider").GetProperty("name").GetString());
+        Assert.Equal(
+            "neutral-adapter",
+            aiAnalysisResult.GetProperty("adapter").GetProperty("name").GetString());
+        Assert.Equal(
+            "impact-workflow-profile",
+            aiAnalysisResult.GetProperty("modelWorkflowProfile").GetProperty("name").GetString());
+        Assert.True(
+            aiAnalysisResult.GetProperty("manualContextUsage").GetProperty("forwardedToExternalAiOrRag").GetBoolean());
+        Assert.Equal("Partial", aiAnalysisResult.GetProperty("retrievedContextState").GetString());
+        Assert.Equal(
+            "Retrieved context was saved only partially for this analysis result.",
+            Assert.Single(aiAnalysisResult.GetProperty("retrievedContextLimitations").EnumerateArray()).GetString());
+        Assert.Equal(
+            "Retrieved context is partial.",
+            Assert.Single(aiAnalysisResult.GetProperty("warnings").EnumerateArray()).GetString());
+        Assert.Equal(
+            "Error message remains legacy error data, not a metadata warning.",
+            aiAnalysisResult.GetProperty("errorMessage").GetString());
+        Assert.False(aiAnalysisResult.TryGetProperty("retrievedContext", out _));
+        Assert.False(aiAnalysisResult.TryGetProperty("items", out _));
+        Assert.DoesNotContain("Out-of-scope Task 4 source title", json, StringComparison.Ordinal);
+        Assert.DoesNotContain("Out-of-scope Task 4 excerpt.", json, StringComparison.Ordinal);
     }
 
     [Fact]

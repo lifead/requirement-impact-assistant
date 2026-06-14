@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Domain;
+using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
 using DomainAnalysis = RequirementImpactAssistant.Web.Domain.Analysis;
 
@@ -86,6 +87,8 @@ public sealed class AnalysisJsonReportBuilder
             return null;
         }
 
+        var metadata = result.Metadata;
+
         return new
         {
             Status = result.Status.ToString(),
@@ -95,10 +98,58 @@ public sealed class AnalysisJsonReportBuilder
             result.ModelName,
             result.PromptVersion,
             result.InputSnapshot,
+            AnalysisMode = metadata.AnalysisMode.ToString(),
+            AnalysisEngine = new
+            {
+                Name = EmptyToNull(FirstNonBlank(metadata.EngineName, result.EngineName))
+            },
+            Provider = new
+            {
+                Name = EmptyToNull(FirstNonBlank(metadata.ProviderName, result.ProviderName))
+            },
+            Adapter = new
+            {
+                Name = EmptyToNull(metadata.AdapterName)
+            },
+            ModelWorkflowProfile = new
+            {
+                Name = EmptyToNull(FirstNonBlank(metadata.ModelWorkflowProfileName, result.ModelName))
+            },
+            ManualContextUsage = new
+            {
+                ForwardedToExternalAiOrRag = metadata.ManualContextForwardedToExternalAiOrRag
+            },
+            RetrievedContextState = metadata.RetrievedContextState.ToString(),
+            RetrievedContextLimitations = ToRetrievedContextLimitations(metadata.RetrievedContextState),
+            Warnings = ToWarnings(metadata.Warnings),
             RawResponse = EmptyToNull(result.RawResponse),
             ErrorMessage = EmptyToNull(result.ErrorMessage)
         };
     }
+
+    private static IReadOnlyList<string> ToRetrievedContextLimitations(RetrievedContextState state) =>
+        state switch
+        {
+            RetrievedContextState.Unavailable =>
+            [
+                "Retrieved context is unavailable for this saved analysis result."
+            ],
+            RetrievedContextState.MetadataOnly =>
+            [
+                "Only retrieved context metadata was saved for this analysis result."
+            ],
+            RetrievedContextState.Partial =>
+            [
+                "Retrieved context was saved only partially for this analysis result."
+            ],
+            _ => []
+        };
+
+    private static IReadOnlyList<string> ToWarnings(IEnumerable<string> warnings) =>
+        warnings
+            .Where(warning => !string.IsNullOrWhiteSpace(warning))
+            .Select(warning => warning.Trim())
+            .ToList();
 
     private static object? ToImpactMap(ImpactMap? impactMap)
     {
@@ -210,6 +261,9 @@ public sealed class AnalysisJsonReportBuilder
         };
     }
 
-    private static string? EmptyToNull(string value) =>
+    private static string? EmptyToNull(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private static string? FirstNonBlank(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 }
