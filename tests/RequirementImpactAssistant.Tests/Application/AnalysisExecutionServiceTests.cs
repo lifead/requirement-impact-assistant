@@ -165,6 +165,261 @@ public sealed class AnalysisExecutionServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_PersistsEngineProvidedMetadataAndRetrievedContextItems()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis("Gateway migration");
+            var metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-rag-engine",
+                ProviderName = "neutral-provider",
+                AdapterName = "neutral-adapter",
+                ModelWorkflowProfileName = "impact-profile",
+                RetrievedContextState = RetrievedContextState.MetadataOnly,
+                ManualContextForwardedToExternalAiOrRag = true,
+                Warnings = ["external context metadata only"],
+                RetrievedContextItems =
+                [
+                    new RetrievedContextItem
+                    {
+                        SourceTitle = "Integration inventory",
+                        ExternalReference = "inventory-record-42",
+                        UrlOrReference = "kb://inventory/42",
+                        Rank = 1,
+                        Score = 0.86,
+                        ProviderName = "neutral-provider",
+                        AdapterName = "neutral-adapter",
+                        Completeness = RetrievedContextItemCompleteness.MetadataOnly,
+                        WarningOrLimitationNote = "Only metadata was returned."
+                    }
+                ]
+            };
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(
+                    dbContext,
+                    new CapturingAssembler(),
+                    new StubAiAnalysisEngine(new AiAnalysisResponse(
+                        AiAnalysisResponseStatus.Partial,
+                        CreateImpactMap(),
+                        "sanitized external diagnostic snapshot",
+                        ["external diagnostic"],
+                        AnalysisBoundaryNotice.Default,
+                        ResultMetadata: metadata)));
+
+                var outcome = await service.RunAsync(analysis.Id);
+
+                Assert.True(outcome.Succeeded);
+                Assert.Equal(AiAnalysisResultStatus.CompletedWithWarnings, outcome.ResultStatus);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var savedResult = await dbContext.AiAnalysisResults
+                    .AsSplitQuery()
+                    .Include(candidate => candidate.Metadata.RetrievedContextItems)
+                    .SingleAsync(candidate => candidate.AnalysisId == analysis.Id);
+
+                Assert.Equal(AiAnalysisResultStatus.CompletedWithWarnings, savedResult.Status);
+                Assert.Equal("external-rag-engine", savedResult.EngineName);
+                Assert.Equal("neutral-provider", savedResult.ProviderName);
+                Assert.Equal("impact-profile", savedResult.ModelName);
+                Assert.Equal("sanitized external diagnostic snapshot", savedResult.RawResponse);
+                Assert.Equal("external diagnostic", savedResult.ErrorMessage);
+
+                var savedMetadata = savedResult.Metadata;
+                Assert.Equal(AnalysisMode.ExternalRag, savedMetadata.AnalysisMode);
+                Assert.Equal("external-rag-engine", savedMetadata.EngineName);
+                Assert.Equal("neutral-provider", savedMetadata.ProviderName);
+                Assert.Equal("neutral-adapter", savedMetadata.AdapterName);
+                Assert.Equal("impact-profile", savedMetadata.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.MetadataOnly, savedMetadata.RetrievedContextState);
+                Assert.True(savedMetadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Equal(["external context metadata only"], savedMetadata.Warnings);
+
+                var savedItem = Assert.Single(savedMetadata.RetrievedContextItems);
+                Assert.Equal("Integration inventory", savedItem.SourceTitle);
+                Assert.Equal("inventory-record-42", savedItem.ExternalReference);
+                Assert.Equal("kb://inventory/42", savedItem.UrlOrReference);
+                Assert.Equal(1, savedItem.Rank);
+                Assert.Equal(0.86, savedItem.Score);
+                Assert.Equal("neutral-provider", savedItem.ProviderName);
+                Assert.Equal("neutral-adapter", savedItem.AdapterName);
+                Assert.Equal(RetrievedContextItemCompleteness.MetadataOnly, savedItem.Completeness);
+                Assert.Equal("Only metadata was returned.", savedItem.WarningOrLimitationNote);
+            }
+
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM RetrievedContextItems;";
+
+                var retrievedContextItemCount = (long)(await command.ExecuteScalarAsync() ?? 0L);
+                Assert.Equal(1L, retrievedContextItemCount);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_OverwritesExistingResultMetadataRetrievedContextItems()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis("Gateway migration");
+            var existingResultId = Guid.NewGuid();
+            analysis.AiAnalysisResult = new AiAnalysisResult
+            {
+                Id = existingResultId,
+                AnalysisId = analysis.Id,
+                Status = AiAnalysisResultStatus.CompletedWithWarnings,
+                EngineName = "previous-external-engine",
+                ProviderName = "previous-provider",
+                ModelName = "previous-profile",
+                PromptVersion = "previous-prompt",
+                InputSnapshot = "previous input",
+                RawResponse = "previous raw response",
+                ErrorMessage = "previous diagnostics",
+                Metadata = new AiAnalysisResultMetadata
+                {
+                    AnalysisMode = AnalysisMode.ExternalRag,
+                    EngineName = "previous-external-engine",
+                    ProviderName = "previous-provider",
+                    AdapterName = "previous-adapter",
+                    ModelWorkflowProfileName = "previous-profile",
+                    RetrievedContextState = RetrievedContextState.Partial,
+                    Warnings = ["previous warning"],
+                    RetrievedContextItems =
+                    [
+                        new RetrievedContextItem
+                        {
+                            SourceTitle = "Previous source",
+                            ExternalReference = "previous-reference",
+                            Completeness = RetrievedContextItemCompleteness.ExcerptOnly
+                        }
+                    ]
+                }
+            };
+            var replacementMetadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "replacement-external-engine",
+                ProviderName = "replacement-provider",
+                AdapterName = "replacement-adapter",
+                ModelWorkflowProfileName = "replacement-profile",
+                RetrievedContextState = RetrievedContextState.MetadataOnly,
+                Warnings = ["replacement warning"],
+                RetrievedContextItems =
+                [
+                    new RetrievedContextItem
+                    {
+                        SourceTitle = "Replacement source",
+                        ExternalReference = "replacement-reference",
+                        Completeness = RetrievedContextItemCompleteness.MetadataOnly
+                    }
+                ]
+            };
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(
+                    dbContext,
+                    new CapturingAssembler(),
+                    new StubAiAnalysisEngine(new AiAnalysisResponse(
+                        AiAnalysisResponseStatus.Succeeded,
+                        CreateImpactMap(),
+                        "replacement raw response",
+                        [],
+                        AnalysisBoundaryNotice.Default,
+                        ResultMetadata: replacementMetadata)));
+
+                var outcome = await service.RunAsync(analysis.Id);
+
+                Assert.True(outcome.Succeeded);
+                Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var savedResult = await dbContext.AiAnalysisResults
+                    .AsSplitQuery()
+                    .Include(candidate => candidate.Metadata.RetrievedContextItems)
+                    .SingleAsync(candidate => candidate.AnalysisId == analysis.Id);
+
+                Assert.Equal(existingResultId, savedResult.Id);
+                Assert.Equal("replacement-external-engine", savedResult.EngineName);
+                Assert.Equal("replacement-provider", savedResult.ProviderName);
+                Assert.Equal("replacement-profile", savedResult.ModelName);
+                Assert.Equal("replacement raw response", savedResult.RawResponse);
+
+                var savedMetadata = savedResult.Metadata;
+                Assert.Equal("replacement-external-engine", savedMetadata.EngineName);
+                Assert.Equal("replacement-provider", savedMetadata.ProviderName);
+                Assert.Equal("replacement-adapter", savedMetadata.AdapterName);
+                Assert.Equal("replacement-profile", savedMetadata.ModelWorkflowProfileName);
+                Assert.Equal(["replacement warning"], savedMetadata.Warnings);
+
+                var savedItem = Assert.Single(savedMetadata.RetrievedContextItems);
+                Assert.Equal("Replacement source", savedItem.SourceTitle);
+                Assert.Equal("replacement-reference", savedItem.ExternalReference);
+                Assert.Equal(RetrievedContextItemCompleteness.MetadataOnly, savedItem.Completeness);
+            }
+
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = """
+                    SELECT
+                        COUNT(*),
+                        SUM(CASE WHEN SourceTitle = 'Replacement source' THEN 1 ELSE 0 END),
+                        SUM(CASE WHEN SourceTitle = 'Previous source' THEN 1 ELSE 0 END)
+                    FROM RetrievedContextItems;
+                    """;
+
+                await using var reader = await command.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal(1L, reader.GetInt64(0));
+                Assert.Equal(1L, reader.GetInt64(1));
+                Assert.Equal(0L, reader.GetInt64(2));
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_DoesNotCallEngineWhenMinimumInputIsMissing()
     {
         var databasePath = CreateDatabasePath();

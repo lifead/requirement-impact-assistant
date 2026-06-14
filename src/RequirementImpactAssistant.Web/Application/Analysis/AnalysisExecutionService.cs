@@ -36,6 +36,7 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
         var analysis = await _dbContext.Analyses
             .Include(candidate => candidate.ContextFragments)
             .Include(candidate => candidate.AiAnalysisResult)
+            .ThenInclude(result => result!.Metadata.RetrievedContextItems)
             .Include(candidate => candidate.ExpertEvaluation)
             .Include(candidate => candidate.ExpertConclusion)
             .SingleOrDefaultAsync(candidate => candidate.Id == analysisId, cancellationToken)
@@ -78,20 +79,31 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
         {
             AnalysisId = analysis.Id
         };
-        var engineName = _analysisEngine.GetType().Name;
-        var providerName = _options.Provider;
-        var modelName = ResolveModelName(_options);
+        var fallbackEngineName = _analysisEngine.GetType().Name;
+        var fallbackProviderName = _options.Provider;
+        var fallbackModelName = ResolveModelName(_options);
+        var resultMetadata = response.ResultMetadata
+            ?? AiAnalysisResultMetadata.CreateDefaultDirectLlm(
+                fallbackEngineName,
+                fallbackProviderName,
+                fallbackModelName,
+                GetDirectLlmWarnings(response));
+        var engineName = ResolveRequiredMetadataValue(
+            resultMetadata.EngineName,
+            fallbackEngineName);
+        var providerName = ResolveRequiredMetadataValue(
+            resultMetadata.ProviderName,
+            fallbackProviderName);
+        var modelName = ResolveRequiredMetadataValue(
+            resultMetadata.ModelWorkflowProfileName,
+            fallbackModelName);
 
         result.Status = resultStatus;
         result.GeneratedAt = DateTimeOffset.UtcNow;
         result.EngineName = engineName;
         result.ProviderName = providerName;
         result.ModelName = modelName;
-        result.Metadata = AiAnalysisResultMetadata.CreateDefaultDirectLlm(
-            engineName,
-            providerName,
-            modelName,
-            GetDirectLlmWarnings(response));
+        result.Metadata = resultMetadata;
         result.PromptVersion = PromptVersion;
         result.InputSnapshot = request.InputSnapshotJson;
         result.RawResponse = response.RawResponse ?? string.Empty;
@@ -163,6 +175,11 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
 
         return string.Empty;
     }
+
+    private static string ResolveRequiredMetadataValue(string? metadataValue, string fallbackValue) =>
+        string.IsNullOrWhiteSpace(metadataValue)
+            ? fallbackValue
+            : metadataValue;
 
     private static string CreateCompletionMessage(AiAnalysisResultStatus status) =>
         status switch
