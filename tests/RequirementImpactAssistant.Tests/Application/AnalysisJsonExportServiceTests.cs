@@ -4,6 +4,10 @@ using System.Reflection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using RequirementImpactAssistant.Web.Application.Analysis;
+using RequirementImpactAssistant.Web.Application.Analysis.External;
+using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Application.Export;
 using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Domain;
@@ -601,6 +605,86 @@ public sealed class AnalysisJsonExportServiceTests
         }
     }
 
+    [Theory]
+    [InlineData(null, "Available", "happy-path", 2, "Local demo requirement catalogue")]
+    [InlineData("metadata-only", "MetadataOnly", "metadata-only", 1, "Local demo integration inventory")]
+    [InlineData("unavailable", "Unavailable", "unavailable", 0, null)]
+    [InlineData("partial", "Partial", "partial", 1, "Local demo requirement excerpt")]
+    public async Task ExportAsync_ExportsAlreadySavedMockExternalResultWithoutCallingAnalysisAgain(
+        string? mockProfileName,
+        string expectedRetrievedContextState,
+        string expectedProfileName,
+        int expectedRetrievedContextItemCount,
+        string? expectedSourceTitle)
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var saved = await SaveAnalysisThroughMockExternalModeAsync(options, mockProfileName);
+            var externalEngineCallsAfterSave = saved.ExternalEngine.CallCount;
+            var adapterCallsAfterSave = saved.Adapter.CallCount;
+            var selectorCallsAfterSave = saved.Selector.SelectedModes.Count;
+
+            await using var dbContext = new ApplicationDbContext(options);
+            var service = new AnalysisJsonExportService(dbContext);
+
+            var result = await service.ExportAsync(saved.AnalysisId, DateTimeOffset.UtcNow);
+
+            Assert.Equal(AnalysisJsonExportResultKind.Exported, result.Kind);
+            Assert.Equal(1, externalEngineCallsAfterSave);
+            Assert.Equal(1, adapterCallsAfterSave);
+            Assert.Equal([AnalysisMode.ExternalRag], saved.Selector.SelectedModes);
+            Assert.Equal(externalEngineCallsAfterSave, saved.ExternalEngine.CallCount);
+            Assert.Equal(adapterCallsAfterSave, saved.Adapter.CallCount);
+            Assert.Equal(selectorCallsAfterSave, saved.Selector.SelectedModes.Count);
+            Assert.Equal(0, saved.DirectEngine.CallCount);
+
+            using var document = JsonDocument.Parse(result.Json);
+            var aiAnalysisResult = document.RootElement.GetProperty("aiAnalysisResult");
+            var retrievedContext = aiAnalysisResult.GetProperty("retrievedContext");
+
+            Assert.Equal("ExternalRag", aiAnalysisResult.GetProperty("analysisMode").GetString());
+            Assert.Equal(
+                nameof(ExternalRagAnalysisEngine),
+                aiAnalysisResult.GetProperty("analysisEngine").GetProperty("name").GetString());
+            Assert.Equal(
+                "LocalMockKnowledgeSource",
+                aiAnalysisResult.GetProperty("provider").GetProperty("name").GetString());
+            Assert.Equal(
+                nameof(MockExternalRagAdapter),
+                aiAnalysisResult.GetProperty("adapter").GetProperty("name").GetString());
+            Assert.Equal(
+                $"local-demo-model / mock-impact-analysis / {expectedProfileName}",
+                aiAnalysisResult.GetProperty("modelWorkflowProfile").GetProperty("name").GetString());
+            Assert.True(
+                aiAnalysisResult.GetProperty("manualContextUsage").GetProperty("forwardedToExternalAiOrRag").GetBoolean());
+            Assert.Equal(expectedRetrievedContextState, aiAnalysisResult.GetProperty("retrievedContextState").GetString());
+            Assert.Equal(expectedRetrievedContextState, retrievedContext.GetProperty("state").GetString());
+
+            var items = retrievedContext.GetProperty("items").EnumerateArray().ToArray();
+            Assert.Equal(expectedRetrievedContextItemCount, items.Length);
+
+            if (expectedSourceTitle is not null)
+            {
+                Assert.Equal(expectedSourceTitle, items[0].GetProperty("sourceTitle").GetString());
+            }
+
+            Assert.DoesNotContain("Dify", result.Json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("ApiKey", result.Json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("Endpoint", result.Json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("secret", result.Json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("embedding", result.Json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("rerank", result.Json, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("vector", result.Json, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
     [Fact]
     public async Task ExportAsync_ExportsSavedLegacyMvp0ResultWithDirectLlmFallbacks()
     {
@@ -809,6 +893,67 @@ public sealed class AnalysisJsonExportServiceTests
         await dbContext.SaveChangesAsync();
     }
 
+    private static async Task<SavedMockExternalAnalysis> SaveAnalysisThroughMockExternalModeAsync(
+        DbContextOptions<ApplicationDbContext> options,
+        string? mockProfileName)
+    {
+        var analysis = CreateReadyForExternalAnalysisGraph();
+        var adapter = new ProfiledCountingMockExternalRagAdapter(mockProfileName);
+        var directEngine = new CountingAiAnalysisEngine(new ThrowingAiAnalysisEngine());
+        var externalEngine = new CountingAiAnalysisEngine(new ExternalRagAnalysisEngine(adapter));
+        var selector = new CountingAiAnalysisEngineSelector(directEngine, externalEngine);
+
+        await using (var dbContext = new ApplicationDbContext(options))
+        {
+            await dbContext.Database.MigrateAsync();
+            dbContext.Analyses.Add(analysis);
+            await dbContext.SaveChangesAsync();
+        }
+
+        await using (var dbContext = new ApplicationDbContext(options))
+        {
+            var service = new AnalysisExecutionService(
+                dbContext,
+                new AnalysisInputAssembler(),
+                selector,
+                Options.Create(new AiAnalysisOptions
+                {
+                    Provider = LlmProviderNames.Demo
+                }));
+
+            var outcome = await service.RunAsync(analysis.Id, AnalysisMode.ExternalRag);
+
+            Assert.Equal(AnalysisExecutionOutcomeKind.Completed, outcome.Kind);
+            Assert.True(outcome.Succeeded);
+        }
+
+        await using (var dbContext = new ApplicationDbContext(options))
+        {
+            var savedAnalysis = await dbContext.Analyses.SingleAsync(candidate => candidate.Id == analysis.Id);
+            var fixedAt = new DateTimeOffset(2026, 06, 13, 12, 30, 0, TimeSpan.Zero);
+
+            savedAnalysis.Status = AnalysisStatus.ExpertConclusionFixed;
+            savedAnalysis.UpdatedAt = fixedAt;
+            dbContext.ExpertConclusions.Add(new ExpertConclusion
+            {
+                AnalysisId = analysis.Id,
+                ConclusionType = ExpertConclusionType.AcceptWithLimitations,
+                Comment = "Human expert conclusion for saved mock external result.",
+                Rationale = "Accepted after reviewing preliminary mock external analytical material.",
+                FixedAt = fixedAt
+            });
+
+            await dbContext.SaveChangesAsync();
+        }
+
+        return new SavedMockExternalAnalysis(
+            analysis.Id,
+            directEngine,
+            externalEngine,
+            adapter,
+            selector);
+    }
+
     private static string CreateDatabasePath() =>
         Path.Combine(
             Path.GetTempPath(),
@@ -939,6 +1084,36 @@ public sealed class AnalysisJsonExportServiceTests
         return analysis;
     }
 
+    private static Analysis CreateReadyForExternalAnalysisGraph()
+    {
+        var analysisId = Guid.NewGuid();
+        var createdAt = new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero);
+        var analysis = new Analysis
+        {
+            Id = analysisId,
+            Title = "Saved mock external result",
+            Status = AnalysisStatus.ReadyForAnalysis,
+            OriginalDescription = "Change integration boundary for a saved mock external result.",
+            ProjectRequest = "Assess the impact of a deterministic mock external change.",
+            SituationDescription = "The project uses local demo context for reproducible analysis.",
+            ChangeSource = "Local demo RFC",
+            CreatedAt = createdAt,
+            UpdatedAt = createdAt
+        };
+
+        analysis.ContextFragments.Add(new ContextFragment
+        {
+            Id = Guid.NewGuid(),
+            AnalysisId = analysisId,
+            Type = ContextFragmentType.ArchitecturalConstraint,
+            Source = "Local architecture note",
+            Text = "Keep integration boundaries explicit and require human expert review.",
+            CreatedAt = createdAt.AddMinutes(10)
+        });
+
+        return analysis;
+    }
+
     private static void ReverseImpactMapItems(ImpactMap impactMap, string fieldName)
     {
         var field = typeof(ImpactMap).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
@@ -954,6 +1129,78 @@ public sealed class AnalysisJsonExportServiceTests
         if (File.Exists(databasePath))
         {
             File.Delete(databasePath);
+        }
+    }
+
+    private sealed record SavedMockExternalAnalysis(
+        Guid AnalysisId,
+        CountingAiAnalysisEngine DirectEngine,
+        CountingAiAnalysisEngine ExternalEngine,
+        ProfiledCountingMockExternalRagAdapter Adapter,
+        CountingAiAnalysisEngineSelector Selector);
+
+    private sealed class ProfiledCountingMockExternalRagAdapter(string? profileName) : IExternalRagAdapter
+    {
+        private readonly MockExternalRagAdapter inner = new();
+
+        public int CallCount { get; private set; }
+
+        public Task<ExternalRagAdapterResponse> AnalyzeAsync(
+            ExternalRagAdapterRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+
+            var profiledRequest = request with
+            {
+                ExecutionMetadata = request.ExecutionMetadata with
+                {
+                    RequestedProfileName = profileName
+                }
+            };
+
+            return inner.AnalyzeAsync(profiledRequest, cancellationToken);
+        }
+    }
+
+    private sealed class CountingAiAnalysisEngine(IAiAnalysisEngine inner) : IAiAnalysisEngine
+    {
+        public int CallCount { get; private set; }
+
+        public Task<AiAnalysisResponse> AnalyzeAsync(
+            AiAnalysisRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+
+            return inner.AnalyzeAsync(request, cancellationToken);
+        }
+    }
+
+    private sealed class ThrowingAiAnalysisEngine : IAiAnalysisEngine
+    {
+        public Task<AiAnalysisResponse> AnalyzeAsync(
+            AiAnalysisRequest request,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Direct LLM engine must not be used by external-mode export tests.");
+    }
+
+    private sealed class CountingAiAnalysisEngineSelector(
+        IAiAnalysisEngine directLlmAnalysisEngine,
+        IAiAnalysisEngine externalRagAnalysisEngine) : IAiAnalysisEngineSelector
+    {
+        public List<AnalysisMode> SelectedModes { get; } = [];
+
+        public IAiAnalysisEngine Select(AnalysisMode analysisMode)
+        {
+            SelectedModes.Add(analysisMode);
+
+            return analysisMode switch
+            {
+                AnalysisMode.DirectLlm => directLlmAnalysisEngine,
+                AnalysisMode.ExternalRag => externalRagAnalysisEngine,
+                _ => throw new ArgumentOutOfRangeException(nameof(analysisMode), analysisMode, "Unsupported test analysis mode.")
+            };
         }
     }
 }
