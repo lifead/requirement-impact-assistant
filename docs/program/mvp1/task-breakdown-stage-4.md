@@ -66,6 +66,7 @@ task review -> implementation -> code review -> commit -> next task
 **Входит:**
 
 - новый `MockExternalRagAdapter` в `src/RequirementImpactAssistant.Web/Application/Analysis/External` или согласованной соседней области;
+- минимальная правка существующего architecture regression test (`Stage3ArchitectureRegressionTests` или аналогичного файла), чтобы Stage 4 допускала ровно одну production implementation `IExternalRagAdapter` - `MockExternalRagAdapter` - и продолжала запрещать Dify/real provider adapters;
 - deterministic completed response:
   - `ExternalRagAdapterResponseStatus.Completed`;
   - provider/adapter metadata с нейтральными именами mock/local demo;
@@ -87,17 +88,20 @@ task review -> implementation -> code review -> commit -> next task
 
 - один production file mock adapter;
 - tests в `tests/RequirementImpactAssistant.Tests/Application`, например `MockExternalRagAdapterTests.cs`;
+- точечная compatibility-правка existing architecture regression test, только для разрешения `MockExternalRagAdapter` как единственной production implementation `IExternalRagAdapter`;
 - без изменений Razor Pages, appsettings, migrations, export services и MVP-0 docs.
 
 **Проверки:**
 
 - `dotnet test`;
 - targeted tests mock adapter happy path;
+- targeted/existing `Stage3ArchitectureRegressionTests`, если test runner позволяет запуск отдельного набора;
 - review diff на отсутствие `Dify`, `HttpClient`, `ApiKey`, `Endpoint`, embeddings, rerank, vector database.
 
 **Критерии Done:**
 
 - mock adapter реализует только `IExternalRagAdapter`;
+- existing architecture regression test больше не блокирует `MockExternalRagAdapter`, но все еще запрещает любые другие production adapter implementations, включая Dify/real provider adapters;
 - response deterministic и не зависит от времени, сети, секретов или внешних файлов;
 - retrieved context отделен от manual context и заполнен через `RetrievedContextItem`;
 - sanitized diagnostic snapshot не содержит provider-specific raw response.
@@ -107,6 +111,7 @@ task review -> implementation -> code review -> commit -> next task
 - adapter делает HTTP/file/network lookup;
 - mock data выглядит как реальные корпоративные данные;
 - в mock response появились Dify-specific поля как обязательная модель;
+- architecture regression test ослаблен шире compatibility-исключения для `MockExternalRagAdapter` и пропускает real provider adapters;
 - `ExternalRagAnalysisEngine` начинает генерировать mock context вместо adapter.
 
 ## Task 2. Добавить варианты mock response для incomplete/error states
