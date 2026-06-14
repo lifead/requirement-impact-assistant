@@ -233,6 +233,204 @@ public sealed class ApplicationDbContextPersistenceTests
     }
 
     [Fact]
+    public async Task ExternalRagResultWithAvailableRetrievedContext_CanBeSavedAndLoadedFromSqlite()
+    {
+        var metadata = CreateExternalRagMetadata(
+            RetrievedContextState.Available,
+            manualContextForwarded: true);
+        metadata.ProviderName = null;
+        metadata.AdapterName = null;
+        metadata.ModelWorkflowProfileName = null;
+        metadata.RetrievedContextItems.Add(new RetrievedContextItem
+        {
+            SourceTitle = "Anonymized requirements package",
+            SourceId = "REQ-001",
+            ExternalReference = "external-ref-001",
+            FragmentId = "fragment-001",
+            Text = "The request can affect validation rules and integration contracts.",
+            Excerpt = "Validation rules and integration contracts.",
+            UrlOrReference = "kb://requirements/req-001",
+            Rank = 1,
+            Score = 0.91,
+            ProviderName = null,
+            AdapterName = null,
+            Completeness = RetrievedContextItemCompleteness.FullText,
+            WarningOrLimitationNote = null
+        });
+
+        var loadedMetadata = await SaveAndLoadExternalRagMetadataAsync(
+            metadata,
+            "external-rag-available");
+
+        Assert.Equal(AnalysisMode.ExternalRag, loadedMetadata.AnalysisMode);
+        Assert.Equal("external-rag-shape", loadedMetadata.EngineName);
+        Assert.Null(loadedMetadata.ProviderName);
+        Assert.Null(loadedMetadata.AdapterName);
+        Assert.Null(loadedMetadata.ModelWorkflowProfileName);
+        Assert.Equal(RetrievedContextState.Available, loadedMetadata.RetrievedContextState);
+        Assert.True(loadedMetadata.ManualContextForwardedToExternalAiOrRag);
+        Assert.Empty(loadedMetadata.Warnings);
+
+        var loadedItem = Assert.Single(loadedMetadata.RetrievedContextItems);
+        Assert.Equal("Anonymized requirements package", loadedItem.SourceTitle);
+        Assert.Equal("REQ-001", loadedItem.SourceId);
+        Assert.Equal("external-ref-001", loadedItem.ExternalReference);
+        Assert.Equal("fragment-001", loadedItem.FragmentId);
+        Assert.Equal(
+            "The request can affect validation rules and integration contracts.",
+            loadedItem.Text);
+        Assert.Equal("Validation rules and integration contracts.", loadedItem.Excerpt);
+        Assert.Equal("kb://requirements/req-001", loadedItem.UrlOrReference);
+        Assert.Equal(1, loadedItem.Rank);
+        Assert.Equal(0.91, loadedItem.Score);
+        Assert.Null(loadedItem.ProviderName);
+        Assert.Null(loadedItem.AdapterName);
+        Assert.Equal(RetrievedContextItemCompleteness.FullText, loadedItem.Completeness);
+        Assert.Null(loadedItem.WarningOrLimitationNote);
+    }
+
+    [Fact]
+    public async Task ExternalRagResultWithMetadataOnlyRetrievedContext_CanBeSavedAndLoadedWithoutFragmentText()
+    {
+        var metadata = CreateExternalRagMetadata(
+            RetrievedContextState.MetadataOnly,
+            manualContextForwarded: false);
+        metadata.ProviderName = "neutral-provider";
+        metadata.AdapterName = "neutral-adapter";
+        metadata.ModelWorkflowProfileName = "neutral-workflow-profile";
+        metadata.RetrievedContextItems.Add(new RetrievedContextItem
+        {
+            SourceTitle = "Anonymized architecture note",
+            SourceId = "ARCH-001",
+            ExternalReference = "external-ref-002",
+            FragmentId = "fragment-002",
+            Text = null,
+            Excerpt = null,
+            UrlOrReference = "kb://architecture/arch-001",
+            Rank = 2,
+            Score = 0.74,
+            ProviderName = "neutral-provider",
+            AdapterName = "neutral-adapter",
+            Completeness = RetrievedContextItemCompleteness.MetadataOnly,
+            WarningOrLimitationNote = "External circuit returned source metadata without fragment text."
+        });
+
+        var loadedMetadata = await SaveAndLoadExternalRagMetadataAsync(
+            metadata,
+            "external-rag-metadata-only");
+
+        Assert.Equal(AnalysisMode.ExternalRag, loadedMetadata.AnalysisMode);
+        Assert.Equal("external-rag-shape", loadedMetadata.EngineName);
+        Assert.Equal("neutral-provider", loadedMetadata.ProviderName);
+        Assert.Equal("neutral-adapter", loadedMetadata.AdapterName);
+        Assert.Equal("neutral-workflow-profile", loadedMetadata.ModelWorkflowProfileName);
+        Assert.Equal(RetrievedContextState.MetadataOnly, loadedMetadata.RetrievedContextState);
+        Assert.False(loadedMetadata.ManualContextForwardedToExternalAiOrRag);
+
+        var loadedItem = Assert.Single(loadedMetadata.RetrievedContextItems);
+        Assert.Equal("Anonymized architecture note", loadedItem.SourceTitle);
+        Assert.Equal("ARCH-001", loadedItem.SourceId);
+        Assert.Equal("external-ref-002", loadedItem.ExternalReference);
+        Assert.Equal("fragment-002", loadedItem.FragmentId);
+        Assert.Null(loadedItem.Text);
+        Assert.Null(loadedItem.Excerpt);
+        Assert.Equal("kb://architecture/arch-001", loadedItem.UrlOrReference);
+        Assert.Equal(2, loadedItem.Rank);
+        Assert.Equal(0.74, loadedItem.Score);
+        Assert.Equal("neutral-provider", loadedItem.ProviderName);
+        Assert.Equal("neutral-adapter", loadedItem.AdapterName);
+        Assert.Equal(RetrievedContextItemCompleteness.MetadataOnly, loadedItem.Completeness);
+        Assert.Equal(
+            "External circuit returned source metadata without fragment text.",
+            loadedItem.WarningOrLimitationNote);
+    }
+
+    [Fact]
+    public async Task ExternalRagResultWithUnavailableRetrievedContext_CanBeSavedAndLoadedWithLimitation()
+    {
+        var metadata = CreateExternalRagMetadata(
+            RetrievedContextState.Unavailable,
+            manualContextForwarded: false);
+        metadata.Warnings.Add("Retrieved context was unavailable in the external result.");
+
+        var loadedMetadata = await SaveAndLoadExternalRagMetadataAsync(
+            metadata,
+            "external-rag-unavailable");
+
+        Assert.Equal(AnalysisMode.ExternalRag, loadedMetadata.AnalysisMode);
+        Assert.Equal(RetrievedContextState.Unavailable, loadedMetadata.RetrievedContextState);
+        Assert.False(loadedMetadata.ManualContextForwardedToExternalAiOrRag);
+        Assert.Equal(
+            ["Retrieved context was unavailable in the external result."],
+            loadedMetadata.Warnings);
+        Assert.Empty(loadedMetadata.RetrievedContextItems);
+    }
+
+    [Fact]
+    public async Task ExternalRagResultWithPartialRetrievedContext_CanBeSavedAndLoadedWithWarning()
+    {
+        var metadata = CreateExternalRagMetadata(
+            RetrievedContextState.Partial,
+            manualContextForwarded: true);
+        metadata.Warnings.Add("Only part of the external retrieved context was returned.");
+        metadata.RetrievedContextItems.Add(new RetrievedContextItem
+        {
+            SourceTitle = "Anonymized integration note",
+            SourceId = "INT-001",
+            ExternalReference = "external-ref-003",
+            FragmentId = "fragment-003",
+            Excerpt = "Downstream consumers may require coordinated validation.",
+            Rank = 1,
+            Score = 0.82,
+            Completeness = RetrievedContextItemCompleteness.ExcerptOnly,
+            WarningOrLimitationNote = "Full source text was not returned."
+        });
+
+        var loadedMetadata = await SaveAndLoadExternalRagMetadataAsync(
+            metadata,
+            "external-rag-partial");
+
+        Assert.Equal(AnalysisMode.ExternalRag, loadedMetadata.AnalysisMode);
+        Assert.Equal(RetrievedContextState.Partial, loadedMetadata.RetrievedContextState);
+        Assert.True(loadedMetadata.ManualContextForwardedToExternalAiOrRag);
+        Assert.Equal(
+            ["Only part of the external retrieved context was returned."],
+            loadedMetadata.Warnings);
+
+        var loadedItem = Assert.Single(loadedMetadata.RetrievedContextItems);
+        Assert.Equal("Anonymized integration note", loadedItem.SourceTitle);
+        Assert.Null(loadedItem.Text);
+        Assert.Equal(
+            "Downstream consumers may require coordinated validation.",
+            loadedItem.Excerpt);
+        Assert.Equal(RetrievedContextItemCompleteness.ExcerptOnly, loadedItem.Completeness);
+        Assert.Equal("Full source text was not returned.", loadedItem.WarningOrLimitationNote);
+    }
+
+    [Fact]
+    public async Task DirectLlmResult_CanBeSavedAndLoadedWithoutManualContextForwardingOrRetrievedContext()
+    {
+        var metadata = AiAnalysisResultMetadata.CreateDefaultDirectLlm(
+            "direct-llm-engine",
+            "demo-provider",
+            "demo-model");
+
+        var loadedMetadata = await SaveAndLoadResultMetadataAsync(
+            metadata,
+            "direct-llm-compatible");
+
+        Assert.Equal(AnalysisMode.DirectLlm, loadedMetadata.AnalysisMode);
+        Assert.Equal("direct-llm-engine", loadedMetadata.EngineName);
+        Assert.Equal("demo-provider", loadedMetadata.ProviderName);
+        Assert.Null(loadedMetadata.AdapterName);
+        Assert.Equal("demo-model", loadedMetadata.ModelWorkflowProfileName);
+        Assert.Equal(RetrievedContextState.Unavailable, loadedMetadata.RetrievedContextState);
+        Assert.False(loadedMetadata.ManualContextForwardedToExternalAiOrRag);
+        Assert.Empty(loadedMetadata.Warnings);
+        Assert.Empty(loadedMetadata.RetrievedContextItems);
+    }
+
+    [Fact]
     public async Task LegacyMvp0AiAnalysisResult_CanBeReadAfterStage1MigrationsWithoutSyntheticRetrievedContext()
     {
         var databasePath = Path.Combine(
@@ -316,6 +514,69 @@ public sealed class ApplicationDbContextPersistenceTests
         new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseSqlite($"Data Source={databasePath}")
             .Options;
+
+    private static AiAnalysisResultMetadata CreateExternalRagMetadata(
+        RetrievedContextState retrievedContextState,
+        bool manualContextForwarded) =>
+        new()
+        {
+            AnalysisMode = AnalysisMode.ExternalRag,
+            EngineName = "external-rag-shape",
+            ProviderName = "neutral-provider",
+            AdapterName = "neutral-adapter",
+            ModelWorkflowProfileName = "neutral-model-workflow-profile",
+            RetrievedContextState = retrievedContextState,
+            ManualContextForwardedToExternalAiOrRag = manualContextForwarded
+        };
+
+    private static Task<AiAnalysisResultMetadata> SaveAndLoadExternalRagMetadataAsync(
+        AiAnalysisResultMetadata metadata,
+        string databaseNamePrefix) =>
+        SaveAndLoadResultMetadataAsync(metadata, databaseNamePrefix);
+
+    private static async Task<AiAnalysisResultMetadata> SaveAndLoadResultMetadataAsync(
+        AiAnalysisResultMetadata metadata,
+        string databaseNamePrefix)
+    {
+        var databasePath = Path.Combine(
+            Path.GetTempPath(),
+            $"requirement-impact-assistant-{databaseNamePrefix}-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysisGraph();
+            var analysisId = analysis.Id;
+            analysis.AiAnalysisResult!.Metadata = metadata;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var loadedAnalysis = await dbContext.Analyses
+                    .AsSplitQuery()
+                    .Include(item => item.AiAnalysisResult)
+                    .SingleAsync(item => item.Id == analysisId);
+
+                return loadedAnalysis.AiAnalysisResult!.Metadata;
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
 
     private static async Task InsertLegacyMvp0AnalysisAsync(
         SqliteConnection connection,
