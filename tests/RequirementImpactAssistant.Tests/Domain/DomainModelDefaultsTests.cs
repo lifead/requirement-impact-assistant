@@ -51,6 +51,7 @@ public sealed class DomainModelDefaultsTests
         Assert.Null(result.Metadata.AdapterName);
         Assert.Null(result.Metadata.ModelWorkflowProfileName);
         Assert.Equal(RetrievedContextState.Unavailable, result.Metadata.RetrievedContextState);
+        Assert.Empty(result.Metadata.RetrievedContextItems);
         Assert.Empty(result.Metadata.Warnings);
         Assert.False(result.Metadata.ManualContextForwardedToExternalAiOrRag);
     }
@@ -71,12 +72,13 @@ public sealed class DomainModelDefaultsTests
         Assert.Null(result.Metadata.AdapterName);
         Assert.Equal("demo-deterministic", result.Metadata.ModelWorkflowProfileName);
         Assert.Equal(RetrievedContextState.Unavailable, result.Metadata.RetrievedContextState);
+        Assert.Empty(result.Metadata.RetrievedContextItems);
         Assert.Empty(result.Metadata.Warnings);
         Assert.False(result.Metadata.ManualContextForwardedToExternalAiOrRag);
     }
 
     [Fact]
-    public void AiAnalysisResultMetadata_CanRepresentRetrievedContextStateWithoutItemModel()
+    public void AiAnalysisResultMetadata_CanRepresentRetrievedContextStateWithoutItems()
     {
         var metadata = new AiAnalysisResultMetadata
         {
@@ -89,10 +91,8 @@ public sealed class DomainModelDefaultsTests
 
         Assert.Equal(AnalysisMode.ExternalRag, metadata.AnalysisMode);
         Assert.Equal(RetrievedContextState.MetadataOnly, metadata.RetrievedContextState);
+        Assert.Empty(metadata.RetrievedContextItems);
         Assert.Equal(["Retrieved context metadata is available without excerpts."], metadata.Warnings);
-        Assert.DoesNotContain(
-            typeof(AiAnalysisResultMetadata).GetProperties(),
-            property => property.Name.Contains("RetrievedContextItem", StringComparison.Ordinal));
     }
 
     [Fact]

@@ -5,6 +5,7 @@ namespace RequirementImpactAssistant.Web.Domain;
 public sealed class AiAnalysisResultMetadata
 {
     private List<string> warnings = [];
+    private List<RetrievedContextItem> retrievedContextItems = [];
 
     public AnalysisMode AnalysisMode { get; set; } = AnalysisMode.DirectLlm;
 
@@ -17,6 +18,12 @@ public sealed class AiAnalysisResultMetadata
     public string? ModelWorkflowProfileName { get; set; }
 
     public RetrievedContextState RetrievedContextState { get; set; } = RetrievedContextState.Unavailable;
+
+    public List<RetrievedContextItem> RetrievedContextItems
+    {
+        get => retrievedContextItems;
+        set => retrievedContextItems = value ?? [];
+    }
 
     public List<string> Warnings
     {
