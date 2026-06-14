@@ -11,7 +11,8 @@ public static class ServiceCollectionExtensions
 {
     public static IServiceCollection AddApplicationPersistence(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        string contentRootPath)
     {
         var connectionString = configuration.GetConnectionString("ApplicationDb");
 
@@ -20,6 +21,10 @@ public static class ServiceCollectionExtensions
             throw new InvalidOperationException(
                 "Connection string 'ApplicationDb' is not configured.");
         }
+
+        connectionString = SqliteConnectionStringResolver.ResolveFileDataSource(
+            connectionString,
+            contentRootPath);
 
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlite(connectionString));

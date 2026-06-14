@@ -1,3 +1,4 @@
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -121,7 +122,9 @@ public sealed class ApplicationConfigurationTests
 
         var services = new ServiceCollection();
 
-        services.AddApplicationPersistence(configuration);
+        var contentRootPath = GetWebProjectPath();
+
+        services.AddApplicationPersistence(configuration, contentRootPath);
 
         using var serviceProvider = services.BuildServiceProvider();
         using var scope = serviceProvider.CreateScope();
@@ -129,6 +132,10 @@ public sealed class ApplicationConfigurationTests
 
         Assert.NotNull(dbContext);
         Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite", dbContext.Database.ProviderName);
+        Assert.Contains(
+            Path.Combine(contentRootPath, "App_Data", "test.db"),
+            dbContext.Database.GetConnectionString(),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -138,7 +145,7 @@ public sealed class ApplicationConfigurationTests
         var services = new ServiceCollection();
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => services.AddApplicationPersistence(configuration));
+            () => services.AddApplicationPersistence(configuration, GetWebProjectPath()));
 
         Assert.Contains("Connection string 'ApplicationDb' is not configured.", exception.Message);
     }
@@ -152,6 +159,10 @@ public sealed class ApplicationConfigurationTests
 
         Assert.NotNull(dbContext);
         Assert.Equal("Microsoft.EntityFrameworkCore.Sqlite", dbContext.Database.ProviderName);
+        Assert.Contains(
+            Path.Combine(GetWebProjectPath(), "App_Data", "requirement-impact-assistant.development.db"),
+            dbContext.Database.GetConnectionString(),
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private sealed class NoopLlmProvider : ILlmProvider

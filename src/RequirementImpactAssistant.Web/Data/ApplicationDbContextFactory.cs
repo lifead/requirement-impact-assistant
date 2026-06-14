@@ -41,6 +41,10 @@ public sealed class ApplicationDbContextFactory : IDesignTimeDbContextFactory<Ap
                 "Connection string 'ApplicationDb' is not configured.");
         }
 
+        connectionString = SqliteConnectionStringResolver.ResolveFileDataSource(
+            connectionString,
+            projectPath);
+
         var optionsBuilder = new DbContextOptionsBuilder<ApplicationDbContext>();
         optionsBuilder.UseSqlite(connectionString);
 

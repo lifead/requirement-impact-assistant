@@ -4,7 +4,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddRazorPages();
-builder.Services.AddApplicationPersistence(builder.Configuration);
+builder.Services.AddApplicationPersistence(builder.Configuration, builder.Environment.ContentRootPath);
 builder.Services.AddApplicationAnalysis(builder.Configuration);
 builder.Services.AddApplicationExport();
 
