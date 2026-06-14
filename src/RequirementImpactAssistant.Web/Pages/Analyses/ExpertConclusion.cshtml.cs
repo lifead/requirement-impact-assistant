@@ -70,7 +70,7 @@ public sealed class ExpertConclusionModel(ApplicationDbContext dbContext) : Page
 
         await dbContext.SaveChangesAsync();
 
-        ExpertConclusionMessage = "Expert conclusion saved.";
+        ExpertConclusionMessage = "Экспертное заключение сохранено.";
 
         return RedirectToPage("/Analyses/ExpertConclusion", new { id = analysis.Id });
     }
@@ -117,14 +117,14 @@ public sealed class ExpertConclusionModel(ApplicationDbContext dbContext) : Page
         {
             modelState.AddModelError(
                 $"{nameof(Input)}.{nameof(ExpertConclusionInput.ConclusionType)}",
-                "Conclusion type is required.");
+                "Тип заключения обязателен.");
         }
 
         if (string.IsNullOrWhiteSpace(Input.Rationale))
         {
             modelState.AddModelError(
                 $"{nameof(Input)}.{nameof(ExpertConclusionInput.Rationale)}",
-                "Rationale is required.");
+                "Обоснование обязательно.");
         }
     }
 
@@ -145,7 +145,7 @@ public sealed class ExpertConclusionModel(ApplicationDbContext dbContext) : Page
 
         public string Comment { get; set; } = string.Empty;
 
-        [Required(ErrorMessage = "Rationale is required.")]
+        [Required(ErrorMessage = "Обоснование обязательно.")]
         public string Rationale { get; set; } = string.Empty;
     }
 }

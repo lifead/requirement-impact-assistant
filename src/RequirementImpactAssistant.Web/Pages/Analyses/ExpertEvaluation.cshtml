@@ -4,25 +4,25 @@
 @using RequirementImpactAssistant.Web.Domain.Impact
 @{
     ViewData["Title"] = Model.Analysis?.Title is null
-        ? "Expert evaluation"
-        : $"Expert evaluation - {Model.Analysis.Title}";
+        ? "Экспертная оценка"
+        : $"Экспертная оценка - {Model.Analysis.Title}";
 }
 
 @if (Model.Analysis is not null)
 {
     <section class="py-4">
         <div class="mb-4">
-            <a asp-page="/Analyses/Details" asp-route-id="@Model.Analysis.Id" class="link-secondary">Back to analysis details</a>
+            <a asp-page="/Analyses/Details" asp-route-id="@Model.Analysis.Id" class="link-secondary">К деталям анализа</a>
         </div>
 
         <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
             <div>
-                <h1 class="h2 mb-2">Expert evaluation</h1>
+                <h1 class="h2 mb-2">Экспертная оценка</h1>
                 <p class="text-muted mb-0">@Model.Analysis.Title</p>
             </div>
             <div class="d-flex align-items-center gap-2">
-                <span class="badge text-bg-secondary">@Model.Analysis.Status</span>
-                <span class="badge text-bg-info">@Model.Analysis.AiResultStatus</span>
+                <span class="badge text-bg-secondary">@AnalysisUiText.AnalysisStatusLabel(Model.Analysis.Status)</span>
+                <span class="badge text-bg-info">@AnalysisUiText.AiResultStatusLabel(Model.Analysis.AiResultStatus)</span>
             </div>
         </div>
 
@@ -35,7 +35,7 @@
             <div asp-validation-summary="ModelOnly" class="text-danger"></div>
 
             <section>
-                <h2 class="h4 mb-3">Impact map marks</h2>
+                <h2 class="h4 mb-3">Оценки элементов карты влияния</h2>
 
                 @{
                     var itemIndex = 0;
@@ -49,7 +49,7 @@
 
                             @if (impactSection.Items.Count == 0)
                             {
-                                <p class="text-muted mb-0">No items.</p>
+                                <p class="text-muted mb-0">Нет элементов.</p>
                             }
                             else
                             {
@@ -57,11 +57,11 @@
                                     <table class="table table-sm align-middle">
                                         <thead>
                                             <tr>
-                                                <th scope="col">Item</th>
-                                                <th scope="col">AI result</th>
-                                                <th scope="col">Mark</th>
-                                                <th scope="col">Comment</th>
-                                                <th scope="col">Correction text</th>
+                                                <th scope="col">Элемент</th>
+                                                <th scope="col">Результат AI</th>
+                                                <th scope="col">Оценка</th>
+                                                <th scope="col">Комментарий</th>
+                                                <th scope="col">Текст исправления</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -71,7 +71,7 @@
                                                     <td>
                                                         <input type="hidden" asp-for="Input.EvaluatedItems[itemIndex].TargetId" value="@item.Id" />
                                                         <div><code>@item.Id</code></div>
-                                                        <div class="small text-muted">@item.ItemType / @item.Severity</div>
+                                                        <div class="small text-muted">@AnalysisUiText.ImpactMapItemTypeLabel(item.ItemType) / @AnalysisUiText.ImpactSeverityLabel(item.Severity)</div>
                                                     </td>
                                                     <td class="text-break">
                                                         <div class="fw-medium">@item.Title</div>
@@ -83,7 +83,7 @@
                                                     </td>
                                                     <td>
                                                         <select asp-for="Input.EvaluatedItems[itemIndex].Mark"
-                                                                asp-items="Html.GetEnumSelectList<ExpertMark>()"
+                                                                asp-items="AnalysisUiText.ExpertMarkItems()"
                                                                 class="form-select form-select-sm"></select>
                                                         <span asp-validation-for="Input.EvaluatedItems[itemIndex].Mark" class="text-danger small"></span>
                                                     </td>
@@ -112,16 +112,16 @@
             </section>
 
             <section class="border-top pt-4">
-                <h2 class="h4 mb-3">Missed items</h2>
+                <h2 class="h4 mb-3">Пропущенные элементы</h2>
                 <div class="table-responsive">
                     <table class="table table-sm align-middle">
                         <thead>
                             <tr>
-                                <th scope="col">Type</th>
-                                <th scope="col">Title</th>
-                                <th scope="col">Description</th>
-                                <th scope="col">Severity</th>
-                                <th scope="col">Comment</th>
+                                <th scope="col">Тип</th>
+                                <th scope="col">Название</th>
+                                <th scope="col">Описание</th>
+                                <th scope="col">Критичность</th>
+                                <th scope="col">Комментарий</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -130,7 +130,7 @@
                                 <tr>
                                     <td>
                                         <select asp-for="Input.MissedItems[index].ItemType"
-                                                asp-items="Html.GetEnumSelectList<ImpactMapItemType>()"
+                                                asp-items="AnalysisUiText.ImpactMapItemTypeItems()"
                                                 class="form-select form-select-sm"></select>
                                     </td>
                                     <td>
@@ -143,7 +143,7 @@
                                     </td>
                                     <td>
                                         <select asp-for="Input.MissedItems[index].Severity"
-                                                asp-items="Html.GetEnumSelectList<ImpactSeverity>()"
+                                                asp-items="AnalysisUiText.ImpactSeverityItems()"
                                                 class="form-select form-select-sm"></select>
                                     </td>
                                     <td>
@@ -157,15 +157,15 @@
             </section>
 
             <section class="border-top pt-4">
-                <h2 class="h4 mb-3">Additional corrections</h2>
+                <h2 class="h4 mb-3">Дополнительные исправления</h2>
                 <div class="table-responsive">
                     <table class="table table-sm align-middle">
                         <thead>
                             <tr>
-                                <th scope="col">Target item</th>
-                                <th scope="col">Type</th>
-                                <th scope="col">Text</th>
-                                <th scope="col">Comment</th>
+                                <th scope="col">Целевой элемент</th>
+                                <th scope="col">Тип</th>
+                                <th scope="col">Текст</th>
+                                <th scope="col">Комментарий</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -174,7 +174,7 @@
                                 <tr>
                                     <td>
                                         <select asp-for="Input.Corrections[index].TargetId" class="form-select form-select-sm">
-                                            <option value="">Select target</option>
+                                            <option value="">Выберите цель</option>
                                             @foreach (var item in Model.Analysis.ImpactSections.SelectMany(section => section.Items))
                                             {
                                                 <option value="@item.Id">@item.Id - @item.Title</option>
@@ -184,7 +184,7 @@
                                     </td>
                                     <td>
                                         <select asp-for="Input.Corrections[index].ItemType"
-                                                asp-items="Html.GetEnumSelectList<ImpactMapItemType>()"
+                                                asp-items="AnalysisUiText.ImpactMapItemTypeItems()"
                                                 class="form-select form-select-sm"></select>
                                     </td>
                                     <td>
@@ -202,24 +202,24 @@
             </section>
 
             <section class="border-top pt-4">
-                <h2 class="h4 mb-3">Overall ratings</h2>
+                <h2 class="h4 mb-3">Общие оценки</h2>
                 <div class="row g-3">
                     <div class="col-md-6">
-                        <label asp-for="Input.ContextSufficiency" class="form-label">Context sufficiency</label>
+                        <label asp-for="Input.ContextSufficiency" class="form-label">Достаточность контекста</label>
                         <select asp-for="Input.ContextSufficiency"
-                                asp-items="Html.GetEnumSelectList<ContextSufficiencyRating>()"
+                                asp-items="AnalysisUiText.ContextSufficiencyItems()"
                                 class="form-select"></select>
                     </div>
                     <div class="col-md-6">
-                        <label asp-for="Input.ResultUsefulness" class="form-label">Result usefulness</label>
+                        <label asp-for="Input.ResultUsefulness" class="form-label">Полезность результата</label>
                         <select asp-for="Input.ResultUsefulness"
-                                asp-items="Html.GetEnumSelectList<ResultUsefulnessRating>()"
+                                asp-items="AnalysisUiText.ResultUsefulnessItems()"
                                 class="form-select"></select>
                     </div>
                 </div>
 
                 <div class="mt-3">
-                    <label asp-for="Input.GeneralComment" class="form-label">General comment</label>
+                    <label asp-for="Input.GeneralComment" class="form-label">Общий комментарий</label>
                     <textarea asp-for="Input.GeneralComment" class="form-control" rows="4"></textarea>
                 </div>
             </section>
@@ -228,9 +228,9 @@
                 <a class="btn btn-outline-secondary"
                    asp-page="/Analyses/Details"
                    asp-route-id="@Model.Analysis.Id">
-                    Cancel
+                    Отмена
                 </a>
-                <button type="submit" class="btn btn-primary">Save expert evaluation</button>
+                <button type="submit" class="btn btn-primary">Сохранить экспертную оценку</button>
             </div>
         </form>
     </section>

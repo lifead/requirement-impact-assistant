@@ -2,30 +2,30 @@
 @model RequirementImpactAssistant.Web.Pages.Analyses.DetailsModel
 @using RequirementImpactAssistant.Web.Domain.Enums
 @{
-    ViewData["Title"] = Model.Analysis?.Title ?? "Analysis";
+    ViewData["Title"] = Model.Analysis?.Title ?? "Анализ";
 }
 
 @if (Model.Analysis is not null)
 {
     <section class="py-4">
         <div class="mb-4">
-            <a asp-page="/Analyses/Index" class="link-secondary">Back to saved analyses</a>
+            <a asp-page="/Analyses/Index" class="link-secondary">К списку сохраненных анализов</a>
         </div>
 
         <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
             <div>
                 <h1 class="h2 mb-2">@Model.Analysis.Title</h1>
-                <p class="text-muted mb-0">Saved analysis overview.</p>
+                <p class="text-muted mb-0">Обзор сохраненного анализа.</p>
             </div>
             <div class="d-flex align-items-center gap-2">
-                <span class="badge text-bg-secondary">@Model.Analysis.Status</span>
+                <span class="badge text-bg-secondary">@AnalysisUiText.AnalysisStatusLabel(Model.Analysis.Status)</span>
                 @if (Model.Analysis.AiAnalysisResult?.ImpactMap is not null &&
                     Model.Analysis.AiAnalysisResult.Status is AiAnalysisResultStatus.Completed or AiAnalysisResultStatus.CompletedWithWarnings)
                 {
                     <a class="btn btn-outline-success btn-sm"
                        asp-page="/Analyses/ExpertEvaluation"
                        asp-route-id="@Model.Analysis.Id">
-                        Expert evaluation
+                        Экспертная оценка
                     </a>
                 }
                 @if (Model.Analysis.HasExpertEvaluation)
@@ -33,7 +33,7 @@
                     <a class="btn btn-outline-success btn-sm"
                        asp-page="/Analyses/ExpertConclusion"
                        asp-route-id="@Model.Analysis.Id">
-                        Expert conclusion
+                        Экспертное заключение
                     </a>
                 }
                 @if (Model.Analysis.ExpertConclusion is not null)
@@ -41,23 +41,23 @@
                     <a class="btn btn-outline-secondary btn-sm"
                        asp-page-handler="ExportJson"
                        asp-route-id="@Model.Analysis.Id">
-                        Download JSON
+                        Скачать JSON
                     </a>
                     <a class="btn btn-outline-secondary btn-sm"
                        asp-page-handler="ExportMarkdown"
                        asp-route-id="@Model.Analysis.Id">
-                        Download Markdown
+                        Скачать Markdown
                     </a>
                 }
                 <a class="btn btn-outline-secondary btn-sm"
                    asp-page="/Analyses/Review"
                    asp-route-id="@Model.Analysis.Id">
-                    Review input
+                    Проверить ввод
                 </a>
                 <a class="btn btn-outline-primary btn-sm"
                    asp-page="/Analyses/Edit"
                    asp-route-id="@Model.Analysis.Id">
-                    Edit
+                    Редактировать
                 </a>
             </div>
         </div>
@@ -68,28 +68,28 @@
         }
 
         <dl class="row">
-            <dt class="col-sm-3">Identifier</dt>
+            <dt class="col-sm-3">Идентификатор</dt>
             <dd class="col-sm-9"><code>@Model.Analysis.Id</code></dd>
 
-            <dt class="col-sm-3">Created</dt>
+            <dt class="col-sm-3">Создано</dt>
             <dd class="col-sm-9">@Model.Analysis.CreatedAt.ToLocalTime().ToString("g")</dd>
 
-            <dt class="col-sm-3">Updated</dt>
+            <dt class="col-sm-3">Обновлено</dt>
             <dd class="col-sm-9">@Model.Analysis.UpdatedAt.ToLocalTime().ToString("g")</dd>
 
-            <dt class="col-sm-3">Fixed</dt>
-            <dd class="col-sm-9">@(Model.Analysis.FixedAt?.ToLocalTime().ToString("g") ?? "Not fixed")</dd>
+            <dt class="col-sm-3">Зафиксировано</dt>
+            <dd class="col-sm-9">@(Model.Analysis.FixedAt?.ToLocalTime().ToString("g") ?? "Не зафиксировано")</dd>
 
-            <dt class="col-sm-3">Change source</dt>
+            <dt class="col-sm-3">Источник изменения</dt>
             <dd class="col-sm-9">@Model.Analysis.ChangeSource</dd>
 
-            <dt class="col-sm-3">Original description</dt>
+            <dt class="col-sm-3">Исходное описание</dt>
             <dd class="col-sm-9">@Model.Analysis.OriginalDescription</dd>
 
-            <dt class="col-sm-3">Project request</dt>
+            <dt class="col-sm-3">Проектный запрос</dt>
             <dd class="col-sm-9">@Model.Analysis.ProjectRequest</dd>
 
-            <dt class="col-sm-3">Situation description</dt>
+            <dt class="col-sm-3">Описание ситуации</dt>
             <dd class="col-sm-9">@Model.Analysis.SituationDescription</dd>
         </dl>
     </section>
@@ -98,21 +98,21 @@
     {
         <section class="py-4 border-top">
             <div class="mb-4">
-                <h2 class="h4 mb-2">Expert conclusion</h2>
-                <p class="text-muted mb-0">Final conclusion fixed by the human expert.</p>
+                <h2 class="h4 mb-2">Экспертное заключение</h2>
+                <p class="text-muted mb-0">Итоговое заключение, зафиксированное экспертом-человеком.</p>
             </div>
 
             <dl class="row">
-                <dt class="col-sm-3">Type</dt>
-                <dd class="col-sm-9">@Model.Analysis.ExpertConclusion.ConclusionType</dd>
+                <dt class="col-sm-3">Тип</dt>
+                <dd class="col-sm-9">@AnalysisUiText.ExpertConclusionTypeLabel(Model.Analysis.ExpertConclusion.ConclusionType)</dd>
 
-                <dt class="col-sm-3">Fixed</dt>
-                <dd class="col-sm-9">@(Model.Analysis.ExpertConclusion.FixedAt?.ToLocalTime().ToString("g") ?? "Not fixed")</dd>
+                <dt class="col-sm-3">Зафиксировано</dt>
+                <dd class="col-sm-9">@(Model.Analysis.ExpertConclusion.FixedAt?.ToLocalTime().ToString("g") ?? "Не зафиксировано")</dd>
 
-                <dt class="col-sm-3">Comment</dt>
+                <dt class="col-sm-3">Комментарий</dt>
                 <dd class="col-sm-9">@Model.Analysis.ExpertConclusion.Comment</dd>
 
-                <dt class="col-sm-3">Rationale</dt>
+                <dt class="col-sm-3">Обоснование</dt>
                 <dd class="col-sm-9">@Model.Analysis.ExpertConclusion.Rationale</dd>
             </dl>
         </section>
@@ -120,14 +120,14 @@
 
     <section class="py-4 border-top">
         <div class="mb-4">
-            <h2 class="h4 mb-2">Preliminary AI analysis result</h2>
-            <p class="text-muted mb-0">This material is preliminary analytical input for human expert review and is not a management decision.</p>
+            <h2 class="h4 mb-2">Предварительный результат AI-анализа</h2>
+            <p class="text-muted mb-0">Этот материал является предварительным аналитическим материалом для экспертного рассмотрения человеком и не является управленческим решением.</p>
         </div>
 
         @if (Model.Analysis.AiAnalysisResult is null)
         {
             <div class="border rounded p-4 bg-light">
-                <p class="mb-0">No preliminary analysis result has been generated yet.</p>
+                <p class="mb-0">Предварительный результат анализа еще не сформирован.</p>
             </div>
         }
         else
@@ -135,29 +135,29 @@
             var aiResult = Model.Analysis.AiAnalysisResult;
 
             <dl class="row">
-                <dt class="col-sm-3">Result status</dt>
-                <dd class="col-sm-9">@aiResult.Status</dd>
+                <dt class="col-sm-3">Статус результата</dt>
+                <dd class="col-sm-9">@AnalysisUiText.AiResultStatusLabel(aiResult.Status)</dd>
 
-                <dt class="col-sm-3">Generated</dt>
-                <dd class="col-sm-9">@(aiResult.GeneratedAt?.ToLocalTime().ToString("g") ?? "Not generated")</dd>
+                <dt class="col-sm-3">Сформировано</dt>
+                <dd class="col-sm-9">@(aiResult.GeneratedAt?.ToLocalTime().ToString("g") ?? "Не сформировано")</dd>
 
-                <dt class="col-sm-3">Engine</dt>
+                <dt class="col-sm-3">Механизм анализа</dt>
                 <dd class="col-sm-9">@aiResult.EngineName</dd>
 
-                <dt class="col-sm-3">Provider</dt>
+                <dt class="col-sm-3">Провайдер</dt>
                 <dd class="col-sm-9">@aiResult.ProviderName</dd>
 
-                <dt class="col-sm-3">Model</dt>
+                <dt class="col-sm-3">Модель</dt>
                 <dd class="col-sm-9">@aiResult.ModelName</dd>
 
-                <dt class="col-sm-3">Prompt version</dt>
+                <dt class="col-sm-3">Версия промпта</dt>
                 <dd class="col-sm-9">@aiResult.PromptVersion</dd>
             </dl>
 
             @if (aiResult.ImpactMap is null)
             {
                 <div class="alert alert-warning" role="status">
-                    No structured impact map was saved for this result. Review diagnostics and raw response below.
+                    Для этого результата не сохранена структурированная карта влияния. Проверьте диагностику и исходный ответ ниже.
                 </div>
             }
             else
@@ -170,7 +170,7 @@
 
                             @if (impactSection.Items.Count == 0)
                             {
-                                <p class="text-muted mb-0">No items.</p>
+                                <p class="text-muted mb-0">Нет элементов.</p>
                             }
                             else
                             {
@@ -178,12 +178,12 @@
                                     <table class="table table-sm align-middle">
                                         <thead>
                                             <tr>
-                                                <th scope="col">Item id</th>
-                                                <th scope="col">Type</th>
-                                                <th scope="col">Severity</th>
-                                                <th scope="col">Title</th>
-                                                <th scope="col">Description</th>
-                                                <th scope="col">Notes</th>
+                                                <th scope="col">Идентификатор</th>
+                                                <th scope="col">Тип</th>
+                                                <th scope="col">Критичность</th>
+                                                <th scope="col">Название</th>
+                                                <th scope="col">Описание</th>
+                                                <th scope="col">Примечания</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -191,8 +191,8 @@
                                             {
                                                 <tr>
                                                     <td><code>@item.Id</code></td>
-                                                    <td>@item.ItemType</td>
-                                                    <td>@item.Severity</td>
+                                                    <td>@AnalysisUiText.ImpactMapItemTypeLabel(item.ItemType)</td>
+                                                    <td>@AnalysisUiText.ImpactSeverityLabel(item.Severity)</td>
                                                     <td>@item.Title</td>
                                                     <td class="text-break">@item.Description</td>
                                                     <td class="text-break">@item.Notes</td>
@@ -210,18 +210,18 @@
             @if (!string.IsNullOrWhiteSpace(aiResult.ErrorMessage))
             {
                 <div class="mt-4">
-                    <h3 class="h5">Diagnostics</h3>
+                    <h3 class="h5">Диагностика</h3>
                     <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.ErrorMessage</pre>
                 </div>
             }
 
             <div class="mt-4">
-                <h3 class="h5">Raw response</h3>
+                <h3 class="h5">Исходный ответ</h3>
                 <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.RawResponse</pre>
             </div>
 
             <div class="mt-4">
-                <h3 class="h5">Input snapshot</h3>
+                <h3 class="h5">Снимок входных данных</h3>
                 <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.InputSnapshot</pre>
             </div>
         }
@@ -229,8 +229,8 @@
 
     <section class="py-4 border-top">
         <div class="mb-4">
-            <h2 class="h4 mb-2">Context fragments</h2>
-            <p class="text-muted mb-0">Manual context attached to this saved analysis.</p>
+            <h2 class="h4 mb-2">Фрагменты контекста</h2>
+            <p class="text-muted mb-0">Контекст, вручную добавленный к этому сохраненному анализу.</p>
         </div>
 
         <form method="post"
@@ -241,26 +241,26 @@
 
             <div class="row g-3">
                 <div class="col-md-4">
-                    <label asp-for="ContextFragmentInput.Type" class="form-label">Type</label>
+                    <label asp-for="ContextFragmentInput.Type" class="form-label">Тип</label>
                     <select asp-for="ContextFragmentInput.Type"
-                            asp-items="Html.GetEnumSelectList<ContextFragmentType>()"
+                            asp-items="AnalysisUiText.ContextFragmentTypeItems()"
                             class="form-select"></select>
                 </div>
                 <div class="col-md-8">
-                    <label asp-for="ContextFragmentInput.Source" class="form-label">Source</label>
+                    <label asp-for="ContextFragmentInput.Source" class="form-label">Источник</label>
                     <input asp-for="ContextFragmentInput.Source" class="form-control" />
                     <span asp-validation-for="ContextFragmentInput.Source" class="text-danger"></span>
                 </div>
             </div>
 
             <div>
-                <label asp-for="ContextFragmentInput.Text" class="form-label">Text</label>
+                <label asp-for="ContextFragmentInput.Text" class="form-label">Текст</label>
                 <textarea asp-for="ContextFragmentInput.Text" class="form-control" rows="5"></textarea>
                 <span asp-validation-for="ContextFragmentInput.Text" class="text-danger"></span>
             </div>
 
             <div>
-                <button type="submit" class="btn btn-primary">Add fragment</button>
+                <button type="submit" class="btn btn-primary">Добавить фрагмент</button>
             </div>
         </form>
 
@@ -271,31 +271,31 @@
               class="d-grid gap-3 mb-4">
             <div class="row g-3">
                 <div class="col-md-4">
-                    <label asp-for="UploadContextFragmentInput.Type" class="form-label">Uploaded file type</label>
+                    <label asp-for="UploadContextFragmentInput.Type" class="form-label">Тип загружаемого файла</label>
                     <select asp-for="UploadContextFragmentInput.Type"
-                            asp-items="Html.GetEnumSelectList<ContextFragmentType>()"
+                            asp-items="AnalysisUiText.ContextFragmentTypeItems()"
                             class="form-select"></select>
                 </div>
                 <div class="col-md-8">
-                    <label asp-for="UploadContextFragmentInput.Source" class="form-label">Uploaded file source</label>
+                    <label asp-for="UploadContextFragmentInput.Source" class="form-label">Источник загружаемого файла</label>
                     <input asp-for="UploadContextFragmentInput.Source" class="form-control" />
                 </div>
             </div>
 
             <div>
-                <label asp-for="UploadContextFragmentInput.File" class="form-label">Markdown, TXT, or JSON file</label>
+                <label asp-for="UploadContextFragmentInput.File" class="form-label">Файл Markdown, TXT или JSON</label>
                 <input asp-for="UploadContextFragmentInput.File" class="form-control" type="file" accept=".md,.txt,.json" />
                 <span asp-validation-for="UploadContextFragmentInput.File" class="text-danger"></span>
             </div>
 
             <div>
-                <button type="submit" class="btn btn-outline-primary">Upload file</button>
+                <button type="submit" class="btn btn-outline-primary">Загрузить файл</button>
             </div>
         </form>
 
         @if (Model.Analysis.ContextFragments.Count == 0)
         {
-            <p class="text-muted mb-0">No context fragments yet.</p>
+            <p class="text-muted mb-0">Фрагментов контекста пока нет.</p>
         }
         else
         {
@@ -303,19 +303,19 @@
                 <table class="table align-middle">
                     <thead>
                         <tr>
-                            <th scope="col">Type</th>
-                            <th scope="col">Source</th>
-                            <th scope="col">File</th>
-                            <th scope="col">Text</th>
-                            <th scope="col">Created</th>
-                            <th scope="col" class="text-end">Actions</th>
+                            <th scope="col">Тип</th>
+                            <th scope="col">Источник</th>
+                            <th scope="col">Файл</th>
+                            <th scope="col">Текст</th>
+                            <th scope="col">Создано</th>
+                            <th scope="col" class="text-end">Действия</th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach (var fragment in Model.Analysis.ContextFragments)
                         {
                             <tr>
-                                <td>@fragment.Type</td>
+                                <td>@AnalysisUiText.ContextFragmentTypeLabel(fragment.Type)</td>
                                 <td>@fragment.Source</td>
                                 <td>@(fragment.FileName ?? "-")</td>
                                 <td class="text-break">@fragment.Text</td>
@@ -326,7 +326,7 @@
                                           asp-route-id="@Model.Analysis.Id"
                                           asp-route-fragmentId="@fragment.Id"
                                           class="d-inline">
-                                        <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+                                        <button type="submit" class="btn btn-outline-danger btn-sm">Удалить</button>
                                     </form>
                                 </td>
                             </tr>

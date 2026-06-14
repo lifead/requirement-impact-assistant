@@ -3,24 +3,24 @@
 @using RequirementImpactAssistant.Web.Domain.Enums
 @{
     ViewData["Title"] = Model.Analysis?.Title is null
-        ? "Expert conclusion"
-        : $"Expert conclusion - {Model.Analysis.Title}";
+        ? "Экспертное заключение"
+        : $"Экспертное заключение - {Model.Analysis.Title}";
 }
 
 @if (Model.Analysis is not null)
 {
     <section class="py-4">
         <div class="mb-4">
-            <a asp-page="/Analyses/Details" asp-route-id="@Model.Analysis.Id" class="link-secondary">Back to analysis details</a>
+            <a asp-page="/Analyses/Details" asp-route-id="@Model.Analysis.Id" class="link-secondary">К деталям анализа</a>
         </div>
 
         <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
             <div>
-                <h1 class="h2 mb-2">Expert conclusion</h1>
+                <h1 class="h2 mb-2">Экспертное заключение</h1>
                 <p class="text-muted mb-0">@Model.Analysis.Title</p>
             </div>
             <div class="d-flex align-items-center gap-2">
-                <span class="badge text-bg-secondary">@Model.Analysis.Status</span>
+                <span class="badge text-bg-secondary">@AnalysisUiText.AnalysisStatusLabel(Model.Analysis.Status)</span>
             </div>
         </div>
 
@@ -32,7 +32,7 @@
         @if (Model.Analysis.FixedAt is not null)
         {
             <dl class="row mb-4">
-                <dt class="col-sm-3">Fixed</dt>
+                <dt class="col-sm-3">Зафиксировано</dt>
                 <dd class="col-sm-9">@Model.Analysis.FixedAt.Value.ToLocalTime().ToString("g")</dd>
             </dl>
         }
@@ -43,21 +43,21 @@
             <section>
                 <div class="row g-3">
                     <div class="col-md-6">
-                        <label asp-for="Input.ConclusionType" class="form-label">Conclusion type</label>
+                        <label asp-for="Input.ConclusionType" class="form-label">Тип заключения</label>
                         <select asp-for="Input.ConclusionType"
-                                asp-items="Html.GetEnumSelectList<ExpertConclusionType>()"
+                                asp-items="AnalysisUiText.ExpertConclusionTypeItems()"
                                 class="form-select"></select>
                         <span asp-validation-for="Input.ConclusionType" class="text-danger"></span>
                     </div>
                 </div>
 
                 <div class="mt-3">
-                    <label asp-for="Input.Comment" class="form-label">Comment</label>
+                    <label asp-for="Input.Comment" class="form-label">Комментарий</label>
                     <textarea asp-for="Input.Comment" class="form-control" rows="4"></textarea>
                 </div>
 
                 <div class="mt-3">
-                    <label asp-for="Input.Rationale" class="form-label">Rationale</label>
+                    <label asp-for="Input.Rationale" class="form-label">Обоснование</label>
                     <textarea asp-for="Input.Rationale" class="form-control" rows="5"></textarea>
                     <span asp-validation-for="Input.Rationale" class="text-danger"></span>
                 </div>
@@ -67,9 +67,9 @@
                 <a class="btn btn-outline-secondary"
                    asp-page="/Analyses/Details"
                    asp-route-id="@Model.Analysis.Id">
-                    Cancel
+                    Отмена
                 </a>
-                <button type="submit" class="btn btn-primary">Save expert conclusion</button>
+                <button type="submit" class="btn btn-primary">Сохранить экспертное заключение</button>
             </div>
         </form>
     </section>

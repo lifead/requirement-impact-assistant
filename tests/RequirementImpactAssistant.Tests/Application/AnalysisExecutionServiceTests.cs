@@ -117,7 +117,7 @@ public sealed class AnalysisExecutionServiceTests
                 var outcome = await service.RunAsync(analysis.Id);
 
                 Assert.Equal(AnalysisExecutionOutcomeKind.InvalidInput, outcome.Kind);
-                Assert.Contains("Minimum analysis fields", outcome.Message);
+                Assert.Contains("Минимальные поля анализа", outcome.Message);
             }
 
             Assert.Equal(0, assembler.CallCount);
@@ -356,7 +356,7 @@ public sealed class AnalysisExecutionServiceTests
 
                 Assert.Equal(AnalysisExecutionOutcomeKind.SnapshotLocked, outcome.Kind);
                 Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
-                Assert.Contains("expert evaluation", outcome.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("экспертная оценка", outcome.Message, StringComparison.OrdinalIgnoreCase);
             }
 
             Assert.Equal(0, assembler.CallCount);
@@ -413,7 +413,7 @@ public sealed class AnalysisExecutionServiceTests
 
                 Assert.Equal(AnalysisExecutionOutcomeKind.SnapshotLocked, outcome.Kind);
                 Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
-                Assert.Contains("expert conclusion", outcome.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("экспертное заключение", outcome.Message, StringComparison.OrdinalIgnoreCase);
             }
 
             Assert.Equal(0, assembler.CallCount);
@@ -463,7 +463,7 @@ public sealed class AnalysisExecutionServiceTests
 
                 Assert.Equal(AnalysisExecutionOutcomeKind.SnapshotLocked, outcome.Kind);
                 Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
-                Assert.Contains("exported", outcome.Message, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("экспортирован", outcome.Message, StringComparison.OrdinalIgnoreCase);
             }
 
             Assert.Equal(0, assembler.CallCount);

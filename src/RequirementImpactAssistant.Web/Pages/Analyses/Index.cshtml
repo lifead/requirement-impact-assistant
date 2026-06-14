@@ -1,22 +1,22 @@
 @page "/Analyses"
 @model RequirementImpactAssistant.Web.Pages.Analyses.IndexModel
 @{
-    ViewData["Title"] = "Saved analyses";
+    ViewData["Title"] = "Сохраненные анализы";
 }
 
 <section class="py-4">
     <div class="d-flex align-items-center justify-content-between gap-3 mb-4">
         <div>
-            <h1 class="h2 mb-1">Saved analyses</h1>
-            <p class="text-muted mb-0">Read-only list of stored analysis artifacts.</p>
+            <h1 class="h2 mb-1">Сохраненные анализы</h1>
+            <p class="text-muted mb-0">Список сохраненных материалов анализа.</p>
         </div>
-        <a class="btn btn-primary" asp-page="/Analyses/Create">New analysis</a>
+        <a class="btn btn-primary" asp-page="/Analyses/Create">Новый анализ</a>
     </div>
 
     @if (Model.Analyses.Count == 0)
     {
         <div class="border rounded p-4 bg-light">
-            <p class="mb-0">No saved analyses yet.</p>
+            <p class="mb-0">Сохраненных анализов пока нет.</p>
         </div>
     }
     else
@@ -25,10 +25,10 @@
             <table class="table table-hover align-middle">
                 <thead>
                     <tr>
-                        <th scope="col">Title</th>
-                        <th scope="col">Status</th>
-                        <th scope="col">Updated</th>
-                        <th scope="col" class="text-end">Open</th>
+                        <th scope="col">Название</th>
+                        <th scope="col">Статус</th>
+                        <th scope="col">Обновлено</th>
+                        <th scope="col" class="text-end">Открыть</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -36,18 +36,18 @@
                     {
                         <tr>
                             <td class="fw-medium">@analysis.Title</td>
-                            <td>@analysis.Status</td>
+                            <td>@AnalysisUiText.AnalysisStatusLabel(analysis.Status)</td>
                             <td>@analysis.UpdatedAt.ToLocalTime().ToString("g")</td>
                             <td class="text-end">
                                 <a class="btn btn-outline-secondary btn-sm"
                                    asp-page="/Analyses/Review"
                                    asp-route-id="@analysis.Id">
-                                    Review input
+                                    Проверить ввод
                                 </a>
                                 <a class="btn btn-outline-primary btn-sm"
                                    asp-page="/Analyses/Details"
                                    asp-route-id="@analysis.Id">
-                                    Open
+                                    Открыть
                                 </a>
                             </td>
                         </tr>

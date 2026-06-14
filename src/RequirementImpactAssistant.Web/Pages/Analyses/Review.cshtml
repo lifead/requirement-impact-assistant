@@ -2,27 +2,27 @@
 @model RequirementImpactAssistant.Web.Pages.Analyses.ReviewModel
 @{
     ViewData["Title"] = Model.Analysis is null
-        ? "Review analysis input"
-        : $"Review input: {Model.Analysis.Title}";
+        ? "Проверка исходных данных анализа"
+        : $"Проверка ввода: {Model.Analysis.Title}";
 }
 
 @if (Model.Analysis is not null)
 {
     <section class="py-4">
         <div class="mb-4">
-            <a asp-page="/Analyses/Details" asp-route-id="@Model.Analysis.Id" class="link-secondary">Back to analysis</a>
+            <a asp-page="/Analyses/Details" asp-route-id="@Model.Analysis.Id" class="link-secondary">К анализу</a>
         </div>
 
         <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
             <div>
-                <h1 class="h2 mb-2">Review input before LLM analysis</h1>
+                <h1 class="h2 mb-2">Проверка исходных данных перед LLM-анализом</h1>
                 <p class="text-muted mb-0">@Model.Analysis.Title</p>
             </div>
-            <span class="badge text-bg-secondary">@Model.Analysis.Status</span>
+            <span class="badge text-bg-secondary">@AnalysisUiText.AnalysisStatusLabel(Model.Analysis.Status)</span>
         </div>
 
         <div class="alert alert-info" role="status">
-            The quality of future intelligent analysis depends on the completeness of the project context.
+            Качество будущего интеллектуального анализа зависит от полноты проектного контекста.
         </div>
 
         <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
@@ -30,66 +30,66 @@
         @if (Model.Analysis.HasMinimumInput)
         {
             <div class="alert alert-success" role="status">
-                Minimum analysis fields are filled. The analysis can continue without additional context fragments.
+                Минимальные поля анализа заполнены. Анализ можно продолжить без дополнительных фрагментов контекста.
             </div>
 
             <form method="post"
                   asp-page-handler="RunAnalysis"
                   asp-route-id="@Model.Analysis.Id"
                   class="mb-4">
-                <button type="submit" class="btn btn-primary">Run preliminary analysis</button>
+                <button type="submit" class="btn btn-primary">Запустить предварительный анализ</button>
             </form>
         }
         else
         {
             <div class="alert alert-warning" role="status">
-                Minimum analysis fields are not fully filled. Complete the source fields before continuing analysis.
+                Минимальные поля анализа заполнены не полностью. Заполните исходные поля перед продолжением анализа.
             </div>
         }
 
         <dl class="row">
-            <dt class="col-sm-3">Identifier</dt>
+            <dt class="col-sm-3">Идентификатор</dt>
             <dd class="col-sm-9"><code>@Model.Analysis.Id</code></dd>
 
-            <dt class="col-sm-3">Status</dt>
-            <dd class="col-sm-9">@Model.Analysis.Status</dd>
+            <dt class="col-sm-3">Статус</dt>
+            <dd class="col-sm-9">@AnalysisUiText.AnalysisStatusLabel(Model.Analysis.Status)</dd>
 
-            <dt class="col-sm-3">Created</dt>
+            <dt class="col-sm-3">Создано</dt>
             <dd class="col-sm-9">@Model.Analysis.CreatedAt.ToLocalTime().ToString("g")</dd>
 
-            <dt class="col-sm-3">Updated</dt>
+            <dt class="col-sm-3">Обновлено</dt>
             <dd class="col-sm-9">@Model.Analysis.UpdatedAt.ToLocalTime().ToString("g")</dd>
 
-            <dt class="col-sm-3">Fixed</dt>
-            <dd class="col-sm-9">@(Model.Analysis.FixedAt?.ToLocalTime().ToString("g") ?? "Not fixed")</dd>
+            <dt class="col-sm-3">Зафиксировано</dt>
+            <dd class="col-sm-9">@(Model.Analysis.FixedAt?.ToLocalTime().ToString("g") ?? "Не зафиксировано")</dd>
 
-            <dt class="col-sm-3">Title</dt>
+            <dt class="col-sm-3">Название</dt>
             <dd class="col-sm-9">@Model.Analysis.Title</dd>
 
-            <dt class="col-sm-3">Original description</dt>
+            <dt class="col-sm-3">Исходное описание</dt>
             <dd class="col-sm-9">@Model.Analysis.OriginalDescription</dd>
 
-            <dt class="col-sm-3">Project request</dt>
+            <dt class="col-sm-3">Проектный запрос</dt>
             <dd class="col-sm-9">@Model.Analysis.ProjectRequest</dd>
 
-            <dt class="col-sm-3">Situation description</dt>
+            <dt class="col-sm-3">Описание ситуации</dt>
             <dd class="col-sm-9">@Model.Analysis.SituationDescription</dd>
 
-            <dt class="col-sm-3">Change source</dt>
+            <dt class="col-sm-3">Источник изменения</dt>
             <dd class="col-sm-9">@Model.Analysis.ChangeSource</dd>
         </dl>
     </section>
 
     <section class="py-4 border-top">
         <div class="mb-4">
-            <h2 class="h4 mb-2">Context prepared for analysis</h2>
-            <p class="text-muted mb-0">Read-only composition of manually added and uploaded context fragments.</p>
+            <h2 class="h4 mb-2">Контекст, подготовленный для анализа</h2>
+            <p class="text-muted mb-0">Состав вручную добавленных и загруженных фрагментов контекста.</p>
         </div>
 
         @if (Model.Analysis.ContextFragments.Count == 0)
         {
             <div class="border rounded p-4 bg-light">
-                <p class="mb-0">No additional context fragments are attached to this analysis.</p>
+                <p class="mb-0">К этому анализу не прикреплены дополнительные фрагменты контекста.</p>
             </div>
         }
         else
@@ -98,18 +98,18 @@
                 <table class="table align-middle">
                     <thead>
                         <tr>
-                            <th scope="col">Type</th>
-                            <th scope="col">Source</th>
-                            <th scope="col">File</th>
-                            <th scope="col">Text</th>
-                            <th scope="col">Created</th>
+                            <th scope="col">Тип</th>
+                            <th scope="col">Источник</th>
+                            <th scope="col">Файл</th>
+                            <th scope="col">Текст</th>
+                            <th scope="col">Создано</th>
                         </tr>
                     </thead>
                     <tbody>
                         @foreach (var fragment in Model.Analysis.ContextFragments)
                         {
                             <tr>
-                                <td>@fragment.Type</td>
+                                <td>@AnalysisUiText.ContextFragmentTypeLabel(fragment.Type)</td>
                                 <td>@fragment.Source</td>
                                 <td>@(fragment.FileName ?? "-")</td>
                                 <td class="text-break">@fragment.Text</td>

@@ -419,7 +419,7 @@ public sealed class AnalysisPagesTests
                     AnalysisExecutionOutcomeKind.Completed,
                     analysis.Id,
                     AiAnalysisResultStatus.Completed,
-                    "Preliminary AI analysis completed."));
+                    "Предварительный AI-анализ завершен."));
                 var pageModel = new ReviewModel(dbContext, service);
 
                 var result = await pageModel.OnPostRunAnalysisAsync(analysis.Id);
@@ -429,7 +429,7 @@ public sealed class AnalysisPagesTests
                 Assert.Equal(1, service.CallCount);
                 Assert.Equal("/Analyses/Details", redirect.PageName);
                 Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
-                Assert.Equal("Preliminary AI analysis completed.", pageModel.AnalysisRunMessage);
+                Assert.Equal("Предварительный AI-анализ завершен.", pageModel.AnalysisRunMessage);
             }
         }
         finally
@@ -464,7 +464,7 @@ public sealed class AnalysisPagesTests
                     AnalysisExecutionOutcomeKind.SnapshotLocked,
                     analysis.Id,
                     AiAnalysisResultStatus.Completed,
-                    "AI analysis rerun is blocked because an expert evaluation has been saved. The saved AI analysis result was not changed."));
+                    "Повторный запуск AI-анализа заблокирован, потому что сохранена экспертная оценка. Сохраненный результат AI-анализа не изменен."));
                 var pageModel = new ReviewModel(dbContext, service);
 
                 var result = await pageModel.OnPostRunAnalysisAsync(analysis.Id);
@@ -474,8 +474,8 @@ public sealed class AnalysisPagesTests
                 Assert.Equal(1, service.CallCount);
                 Assert.Equal("/Analyses/Details", redirect.PageName);
                 Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
-                Assert.Contains("blocked", pageModel.AnalysisRunMessage, StringComparison.OrdinalIgnoreCase);
-                Assert.Contains("not changed", pageModel.AnalysisRunMessage, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("заблокирован", pageModel.AnalysisRunMessage, StringComparison.OrdinalIgnoreCase);
+                Assert.Contains("не изменен", pageModel.AnalysisRunMessage, StringComparison.OrdinalIgnoreCase);
             }
         }
         finally
@@ -511,7 +511,7 @@ public sealed class AnalysisPagesTests
                     AnalysisExecutionOutcomeKind.InvalidInput,
                     analysis.Id,
                     ResultStatus: null,
-                    Message: "Minimum analysis fields are not fully filled."));
+                    Message: "Минимальные поля анализа заполнены не полностью."));
                 var pageModel = new ReviewModel(dbContext, service);
 
                 var result = await pageModel.OnPostRunAnalysisAsync(analysis.Id);
@@ -523,7 +523,7 @@ public sealed class AnalysisPagesTests
                 Assert.False(pageModel.ModelState.IsValid);
                 Assert.Contains(
                     pageModel.ModelState[string.Empty]!.Errors,
-                    error => error.ErrorMessage.Contains("Minimum analysis fields", StringComparison.Ordinal));
+                    error => error.ErrorMessage.Contains("Минимальные поля анализа", StringComparison.Ordinal));
             }
         }
         finally
@@ -838,8 +838,8 @@ public sealed class AnalysisPagesTests
                         File = CreateUploadFile("payment-api.JSON", "{\"endpoint\":\"/payments\"}")
                     }
                 };
-                pageModel.ModelState.AddModelError("ContextFragmentInput.Source", "Source is required.");
-                pageModel.ModelState.AddModelError("ContextFragmentInput.Text", "Text is required.");
+                pageModel.ModelState.AddModelError("ContextFragmentInput.Source", "Источник обязателен.");
+                pageModel.ModelState.AddModelError("ContextFragmentInput.Text", "Текст обязателен.");
 
                 var result = await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
                 var redirect = Assert.IsType<RedirectToPageResult>(result);
@@ -1620,7 +1620,7 @@ public sealed class AnalysisPagesTests
                 Assert.False(pageModel.ModelState.IsValid);
                 Assert.Contains(
                     pageModel.ModelState.Values.SelectMany(value => value.Errors),
-                    error => error.ErrorMessage == "Impact item target must be unique.");
+                    error => error.ErrorMessage == "Целевой элемент карты влияния должен быть уникальным.");
                 Assert.NotNull(pageModel.Analysis);
                 Assert.Equal(
                     EnumerateImpactItems(impactMap).Count(),
@@ -2044,10 +2044,10 @@ public sealed class AnalysisPagesTests
                 Assert.NotNull(pageModel.Analysis);
                 Assert.Contains(
                     pageModel.ModelState.Values.SelectMany(value => value.Errors),
-                    error => error.ErrorMessage == "Conclusion type is required.");
+                    error => error.ErrorMessage == "Тип заключения обязателен.");
                 Assert.Contains(
                     pageModel.ModelState.Values.SelectMany(value => value.Errors),
-                    error => error.ErrorMessage == "Rationale is required.");
+                    error => error.ErrorMessage == "Обоснование обязательно.");
             }
 
             await using (var dbContext = new ApplicationDbContext(options))

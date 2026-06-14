@@ -30,7 +30,7 @@ public sealed class ReviewModel(
     {
         if (analysisExecutionService is null)
         {
-            throw new InvalidOperationException("Analysis execution service is not configured.");
+            throw new InvalidOperationException("Сервис выполнения анализа не настроен.");
         }
 
         var cancellationToken = PageContext?.HttpContext?.RequestAborted ?? CancellationToken.None;

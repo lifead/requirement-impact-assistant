@@ -117,7 +117,7 @@ public sealed class ExpertEvaluationModel(ApplicationDbContext dbContext) : Page
         analysis.UpdatedAt = DateTimeOffset.UtcNow;
         await dbContext.SaveChangesAsync();
 
-        ExpertEvaluationMessage = "Expert evaluation saved.";
+        ExpertEvaluationMessage = "Экспертная оценка сохранена.";
 
         return RedirectToPage("/Analyses/ExpertEvaluation", new { id = analysis.Id });
     }
@@ -251,19 +251,19 @@ public sealed class ExpertEvaluationModel(ApplicationDbContext dbContext) : Page
 
     private static IReadOnlyList<ImpactMapSectionDetails> ToImpactSections(ImpactMap impactMap) =>
     [
-        new("Change summary", [impactMap.ChangeSummary]),
-        new("Affected requirements", impactMap.AffectedRequirements),
-        new("Affected tasks", impactMap.AffectedTasks),
-        new("Affected project decisions", impactMap.AffectedProjectDecisions),
-        new("Affected API/interfaces/documents/tests", impactMap.AffectedApiInterfacesDocumentsTests),
-        new("Affected architectural constraints", impactMap.AffectedArchitecturalConstraints),
-        new("Affected organizational context", impactMap.AffectedOrganizationalContextItems),
-        new("Contradictions", impactMap.Contradictions),
-        new("Missing information", impactMap.MissingInformation),
-        new("Clarification questions", impactMap.ClarificationQuestions),
-        new("Risks", impactMap.Risks),
-        new("Options for expert review", impactMap.OptionsForExpertReview),
-        new("Preliminary assessment", [impactMap.PreliminaryAssessment])
+        new("Сводка изменения", [impactMap.ChangeSummary]),
+        new("Затронутые требования", impactMap.AffectedRequirements),
+        new("Затронутые задачи", impactMap.AffectedTasks),
+        new("Затронутые проектные решения", impactMap.AffectedProjectDecisions),
+        new("Затронутые API, интерфейсы, документы и тесты", impactMap.AffectedApiInterfacesDocumentsTests),
+        new("Затронутые архитектурные ограничения", impactMap.AffectedArchitecturalConstraints),
+        new("Затронутый организационный контекст", impactMap.AffectedOrganizationalContextItems),
+        new("Противоречия", impactMap.Contradictions),
+        new("Недостающая информация", impactMap.MissingInformation),
+        new("Вопросы для уточнения", impactMap.ClarificationQuestions),
+        new("Риски", impactMap.Risks),
+        new("Варианты для экспертного рассмотрения", impactMap.OptionsForExpertReview),
+        new("Предварительная оценка", [impactMap.PreliminaryAssessment])
     ];
 
     private static IEnumerable<ImpactMapItem> EnumerateImpactItems(ImpactMap impactMap) =>
@@ -279,28 +279,28 @@ public sealed class ExpertEvaluationModel(ApplicationDbContext dbContext) : Page
 
             if (!submittedTargetIds.Add(item.TargetId))
             {
-                modelState.AddModelError($"{prefix}.{nameof(EvaluatedImpactItemInput.TargetId)}", "Impact item target must be unique.");
+                modelState.AddModelError($"{prefix}.{nameof(EvaluatedImpactItemInput.TargetId)}", "Целевой элемент карты влияния должен быть уникальным.");
             }
 
             if (!validTargetIds.Contains(item.TargetId))
             {
-                modelState.AddModelError($"{prefix}.{nameof(EvaluatedImpactItemInput.TargetId)}", "Impact item target is not part of the current analysis result.");
+                modelState.AddModelError($"{prefix}.{nameof(EvaluatedImpactItemInput.TargetId)}", "Целевой элемент карты влияния не входит в текущий результат анализа.");
             }
 
             if (item.Mark == ExpertMark.NotSet)
             {
-                modelState.AddModelError($"{prefix}.{nameof(EvaluatedImpactItemInput.Mark)}", "Mark is required.");
+                modelState.AddModelError($"{prefix}.{nameof(EvaluatedImpactItemInput.Mark)}", "Оценка обязательна.");
             }
 
             if (item.Mark == ExpertMark.Corrected && string.IsNullOrWhiteSpace(item.CorrectionText))
             {
-                modelState.AddModelError($"{prefix}.{nameof(EvaluatedImpactItemInput.CorrectionText)}", "Correction text is required for corrected items.");
+                modelState.AddModelError($"{prefix}.{nameof(EvaluatedImpactItemInput.CorrectionText)}", "Текст исправления обязателен для исправленных элементов.");
             }
         }
 
         foreach (var missingTargetId in validTargetIds.Except(submittedTargetIds, StringComparer.Ordinal))
         {
-            modelState.AddModelError(nameof(Input.EvaluatedItems), $"Mark is required for impact item '{missingTargetId}'.");
+            modelState.AddModelError(nameof(Input.EvaluatedItems), $"Оценка обязательна для элемента карты влияния '{missingTargetId}'.");
         }
 
         for (var index = 0; index < Input.MissedItems.Count; index++)
@@ -312,8 +312,8 @@ public sealed class ExpertEvaluationModel(ApplicationDbContext dbContext) : Page
             }
 
             var prefix = $"{nameof(Input)}.{nameof(Input.MissedItems)}[{index}]";
-            AddRequiredError(modelState, $"{prefix}.{nameof(MissedItemInput.Title)}", item.Title, "Title is required.");
-            AddRequiredError(modelState, $"{prefix}.{nameof(MissedItemInput.Description)}", item.Description, "Description is required.");
+            AddRequiredError(modelState, $"{prefix}.{nameof(MissedItemInput.Title)}", item.Title, "Название обязательно.");
+            AddRequiredError(modelState, $"{prefix}.{nameof(MissedItemInput.Description)}", item.Description, "Описание обязательно.");
         }
 
         for (var index = 0; index < Input.Corrections.Count; index++)
@@ -325,12 +325,12 @@ public sealed class ExpertEvaluationModel(ApplicationDbContext dbContext) : Page
             }
 
             var prefix = $"{nameof(Input)}.{nameof(Input.Corrections)}[{index}]";
-            AddRequiredError(modelState, $"{prefix}.{nameof(CorrectionInput.TargetId)}", item.TargetId, "Target item is required.");
-            AddRequiredError(modelState, $"{prefix}.{nameof(CorrectionInput.Text)}", item.Text, "Correction text is required.");
+            AddRequiredError(modelState, $"{prefix}.{nameof(CorrectionInput.TargetId)}", item.TargetId, "Целевой элемент обязателен.");
+            AddRequiredError(modelState, $"{prefix}.{nameof(CorrectionInput.Text)}", item.Text, "Текст исправления обязателен.");
 
             if (!string.IsNullOrWhiteSpace(item.TargetId) && !validTargetIds.Contains(item.TargetId))
             {
-                modelState.AddModelError($"{prefix}.{nameof(CorrectionInput.TargetId)}", "Correction target is not part of the current analysis result.");
+                modelState.AddModelError($"{prefix}.{nameof(CorrectionInput.TargetId)}", "Цель исправления не входит в текущий результат анализа.");
             }
         }
     }

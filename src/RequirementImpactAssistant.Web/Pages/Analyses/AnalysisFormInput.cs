@@ -6,19 +6,19 @@ namespace RequirementImpactAssistant.Web.Pages.Analyses;
 
 public sealed class AnalysisFormInput
 {
-    [Required(ErrorMessage = "Title is required.")]
+    [Required(ErrorMessage = "Название обязательно.")]
     public string Title { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "Original description is required.")]
+    [Required(ErrorMessage = "Исходное описание обязательно.")]
     public string OriginalDescription { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "Project request is required.")]
+    [Required(ErrorMessage = "Проектный запрос обязателен.")]
     public string ProjectRequest { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "Situation description is required.")]
+    [Required(ErrorMessage = "Описание ситуации обязательно.")]
     public string SituationDescription { get; set; } = string.Empty;
 
-    [Required(ErrorMessage = "Change source is required.")]
+    [Required(ErrorMessage = "Источник изменения обязателен.")]
     public string ChangeSource { get; set; } = string.Empty;
 
     public static AnalysisFormInput FromAnalysis(Analysis analysis) =>
@@ -42,11 +42,11 @@ public sealed class AnalysisFormInput
 
     public bool Validate(ModelStateDictionary modelState)
     {
-        AddRequiredError(modelState, nameof(Title), Title, "Title is required.");
-        AddRequiredError(modelState, nameof(OriginalDescription), OriginalDescription, "Original description is required.");
-        AddRequiredError(modelState, nameof(ProjectRequest), ProjectRequest, "Project request is required.");
-        AddRequiredError(modelState, nameof(SituationDescription), SituationDescription, "Situation description is required.");
-        AddRequiredError(modelState, nameof(ChangeSource), ChangeSource, "Change source is required.");
+        AddRequiredError(modelState, nameof(Title), Title, "Название обязательно.");
+        AddRequiredError(modelState, nameof(OriginalDescription), OriginalDescription, "Исходное описание обязательно.");
+        AddRequiredError(modelState, nameof(ProjectRequest), ProjectRequest, "Проектный запрос обязателен.");
+        AddRequiredError(modelState, nameof(SituationDescription), SituationDescription, "Описание ситуации обязательно.");
+        AddRequiredError(modelState, nameof(ChangeSource), ChangeSource, "Источник изменения обязателен.");
 
         return modelState.IsValid;
     }

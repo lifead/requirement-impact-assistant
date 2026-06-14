@@ -294,19 +294,19 @@ public sealed class DetailsModel(
                 ? []
                 :
                 [
-                    new("Change summary", [ImpactMap.ChangeSummary]),
-                    new("Affected requirements", ImpactMap.AffectedRequirements),
-                    new("Affected tasks", ImpactMap.AffectedTasks),
-                    new("Affected project decisions", ImpactMap.AffectedProjectDecisions),
-                    new("Affected API/interfaces/documents/tests", ImpactMap.AffectedApiInterfacesDocumentsTests),
-                    new("Affected architectural constraints", ImpactMap.AffectedArchitecturalConstraints),
-                    new("Affected organizational context", ImpactMap.AffectedOrganizationalContextItems),
-                    new("Contradictions", ImpactMap.Contradictions),
-                    new("Missing information", ImpactMap.MissingInformation),
-                    new("Clarification questions", ImpactMap.ClarificationQuestions),
-                    new("Risks", ImpactMap.Risks),
-                    new("Options for expert review", ImpactMap.OptionsForExpertReview),
-                    new("Preliminary assessment", [ImpactMap.PreliminaryAssessment])
+                    new("Сводка изменения", [ImpactMap.ChangeSummary]),
+                    new("Затронутые требования", ImpactMap.AffectedRequirements),
+                    new("Затронутые задачи", ImpactMap.AffectedTasks),
+                    new("Затронутые проектные решения", ImpactMap.AffectedProjectDecisions),
+                    new("Затронутые API, интерфейсы, документы и тесты", ImpactMap.AffectedApiInterfacesDocumentsTests),
+                    new("Затронутые архитектурные ограничения", ImpactMap.AffectedArchitecturalConstraints),
+                    new("Затронутый организационный контекст", ImpactMap.AffectedOrganizationalContextItems),
+                    new("Противоречия", ImpactMap.Contradictions),
+                    new("Недостающая информация", ImpactMap.MissingInformation),
+                    new("Вопросы для уточнения", ImpactMap.ClarificationQuestions),
+                    new("Риски", ImpactMap.Risks),
+                    new("Варианты для экспертного рассмотрения", ImpactMap.OptionsForExpertReview),
+                    new("Предварительная оценка", [ImpactMap.PreliminaryAssessment])
                 ];
     }
 
@@ -327,16 +327,16 @@ public sealed class DetailsModel(
     {
         public ContextFragmentType Type { get; set; } = ContextFragmentType.Other;
 
-        [Required(ErrorMessage = "Source is required.")]
+        [Required(ErrorMessage = "Источник обязателен.")]
         public string Source { get; set; } = string.Empty;
 
-        [Required(ErrorMessage = "Text is required.")]
+        [Required(ErrorMessage = "Текст обязателен.")]
         public string Text { get; set; } = string.Empty;
 
         public bool Validate(ModelStateDictionary modelState)
         {
-            AddRequiredError(modelState, nameof(Source), Source, "Source is required.");
-            AddRequiredError(modelState, nameof(Text), Text, "Text is required.");
+            AddRequiredError(modelState, nameof(Source), Source, "Источник обязателен.");
+            AddRequiredError(modelState, nameof(Text), Text, "Текст обязателен.");
 
             return modelState.IsValid;
         }
@@ -376,7 +376,7 @@ public sealed class DetailsModel(
         {
             if (File is null || File.Length == 0)
             {
-                modelState.AddModelError($"{nameof(DetailsModel.UploadContextFragmentInput)}.{nameof(File)}", "File is required.");
+                modelState.AddModelError($"{nameof(DetailsModel.UploadContextFragmentInput)}.{nameof(File)}", "Файл обязателен.");
                 return false;
             }
 
@@ -384,7 +384,7 @@ public sealed class DetailsModel(
             {
                 modelState.AddModelError(
                     $"{nameof(DetailsModel.UploadContextFragmentInput)}.{nameof(File)}",
-                    "File size must be 1 MB or less.");
+                    "Размер файла не должен превышать 1 МБ.");
             }
 
             var extension = Path.GetExtension(SanitizeOriginalFileName(File.FileName));
@@ -392,7 +392,7 @@ public sealed class DetailsModel(
             {
                 modelState.AddModelError(
                     $"{nameof(DetailsModel.UploadContextFragmentInput)}.{nameof(File)}",
-                    "Only Markdown, TXT, and JSON files are supported.");
+                    "Поддерживаются только файлы Markdown, TXT и JSON.");
             }
 
             return modelState.IsValid;

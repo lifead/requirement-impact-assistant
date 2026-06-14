@@ -47,7 +47,7 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
                 AnalysisExecutionOutcomeKind.NotFound,
                 analysisId,
                 ResultStatus: null,
-                Message: "Analysis was not found.");
+                Message: "Анализ не найден.");
         }
 
         if (IsSnapshotLocked(analysis))
@@ -65,7 +65,7 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
                 AnalysisExecutionOutcomeKind.InvalidInput,
                 analysis.Id,
                 ResultStatus: null,
-                Message: "Minimum analysis fields are not fully filled. Complete the source fields before running analysis.");
+                Message: "Минимальные поля анализа заполнены не полностью. Заполните исходные поля перед запуском анализа.");
         }
 
         var request = _inputAssembler.Assemble(analysis);
@@ -154,21 +154,21 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
     private static string CreateCompletionMessage(AiAnalysisResultStatus status) =>
         status switch
         {
-            AiAnalysisResultStatus.Completed => "Preliminary AI analysis completed.",
-            AiAnalysisResultStatus.CompletedWithWarnings => "Preliminary AI analysis completed with diagnostics that require attention.",
-            AiAnalysisResultStatus.InvalidResponse => "AI analysis returned an invalid response. Raw response and diagnostics were saved.",
-            AiAnalysisResultStatus.Failed => "AI analysis failed. Diagnostics were saved.",
-            _ => "AI analysis finished."
+            AiAnalysisResultStatus.Completed => "Предварительный AI-анализ завершен.",
+            AiAnalysisResultStatus.CompletedWithWarnings => "Предварительный AI-анализ завершен с диагностикой, требующей внимания.",
+            AiAnalysisResultStatus.InvalidResponse => "AI-анализ вернул некорректный ответ. Исходный ответ и диагностика сохранены.",
+            AiAnalysisResultStatus.Failed => "AI-анализ не выполнен. Диагностика сохранена.",
+            _ => "AI-анализ завершен."
         };
 
     private static string CreateSnapshotLockedMessage(DomainAnalysis analysis)
     {
         var reason = analysis.ExpertConclusion is not null
-            ? "an expert conclusion has been saved"
+            ? "сохранено экспертное заключение"
             : analysis.ExpertEvaluation is not null
-                ? "an expert evaluation has been saved"
-                : "the analysis has been exported";
+                ? "сохранена экспертная оценка"
+                : "анализ был экспортирован";
 
-        return $"AI analysis rerun is blocked because {reason}. The saved AI analysis result was not changed.";
+        return $"Повторный запуск AI-анализа заблокирован, потому что {reason}. Сохраненный результат AI-анализа не изменен.";
     }
 }
