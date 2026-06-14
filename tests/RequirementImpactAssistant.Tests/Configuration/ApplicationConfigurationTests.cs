@@ -3,8 +3,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using RequirementImpactAssistant.Web.Application.Analysis;
+using RequirementImpactAssistant.Web.Application.Analysis.External;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Data;
+using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Extensions;
 
@@ -82,11 +84,39 @@ public sealed class ApplicationConfigurationTests
         using var scope = serviceProvider.CreateScope();
         var engine = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngine>();
         var selector = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngineSelector>();
+        var externalAdapter = scope.ServiceProvider.GetRequiredService<IExternalRagAdapter>();
 
         Assert.IsType<DirectLlmAnalysisEngine>(engine);
+        Assert.IsType<MockExternalRagAdapter>(externalAdapter);
         Assert.IsType<DirectLlmAnalysisEngine>(selector.Select(AnalysisMode.DirectLlm));
         Assert.IsType<ExternalRagAnalysisEngine>(selector.Select(AnalysisMode.ExternalRag));
         Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IAnalysisExecutionService));
+    }
+
+    [Fact]
+    public async Task ApplicationAnalysisRegistration_WiresMockAdapterForExternalRagMode()
+    {
+        var configuration = CreateApplicationConfiguration();
+        var services = new ServiceCollection();
+        services.AddSingleton<ILlmProvider, NoopLlmProvider>();
+
+        services.AddApplicationAnalysis(configuration);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+        var selector = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngineSelector>();
+
+        var response = await selector
+            .Select(AnalysisMode.ExternalRag)
+            .AnalyzeAsync(CreateAnalysisRequest());
+
+        Assert.Equal(AiAnalysisResponseStatus.Succeeded, response.Status);
+        Assert.NotNull(response.ResultMetadata);
+        Assert.Equal(AnalysisMode.ExternalRag, response.ResultMetadata.AnalysisMode);
+        Assert.Equal(nameof(ExternalRagAnalysisEngine), response.ResultMetadata.EngineName);
+        Assert.Equal("LocalMockKnowledgeSource", response.ResultMetadata.ProviderName);
+        Assert.Equal(nameof(MockExternalRagAdapter), response.ResultMetadata.AdapterName);
+        Assert.Equal(RetrievedContextState.Available, response.ResultMetadata.RetrievedContextState);
     }
 
     [Fact]
@@ -189,6 +219,25 @@ public sealed class ApplicationConfigurationTests
             .AddJsonFile("appsettings.json", optional: false)
             .AddJsonFile("appsettings.Development.json", optional: false)
             .Build();
+    }
+
+    private static AiAnalysisRequest CreateAnalysisRequest()
+    {
+        var snapshot = new AnalysisInputSnapshot(
+            AnalysisId: Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            Analysis: new AnalysisInputFields(
+                Title: "Gateway migration",
+                OriginalDescription: "Original requirement",
+                ProjectRequest: "Project request",
+                SituationDescription: "Current situation",
+                ChangeSource: "Change source"),
+            ContextFragments: []);
+
+        return new AiAnalysisRequest(
+            InputSnapshot: snapshot,
+            InputSnapshotJson: "{\"analysisId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}",
+            ExpectedResult: ExpectedAnalysisResultStructure.Default,
+            BoundaryNotice: AnalysisBoundaryNotice.Default);
     }
 
     private static string GetWebProjectPath()

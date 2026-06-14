@@ -106,6 +106,8 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
             resultMetadata.ModelWorkflowProfileName,
             fallbackModelName);
 
+        AssignRetrievedContextItemOrdinals(resultMetadata);
+
         result.Status = resultStatus;
         result.GeneratedAt = DateTimeOffset.UtcNow;
         result.EngineName = engineName;
@@ -136,6 +138,16 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
             analysis.Id,
             resultStatus,
             CreateCompletionMessage(resultStatus));
+    }
+
+    private void AssignRetrievedContextItemOrdinals(AiAnalysisResultMetadata metadata)
+    {
+        var ordinal = 0;
+
+        foreach (var contextItem in metadata.RetrievedContextItems)
+        {
+            _dbContext.Entry(contextItem).Property("Ordinal").CurrentValue = ordinal++;
+        }
     }
 
     private static bool HasMinimumInput(DomainAnalysis analysis) =>

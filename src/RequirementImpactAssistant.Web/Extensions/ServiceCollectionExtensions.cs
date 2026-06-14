@@ -47,6 +47,7 @@ public static class ServiceCollectionExtensions
                 "DeepSeek model is required when DeepSeek provider is selected.");
 
         services.AddScoped<DirectLlmAnalysisEngine>();
+        services.TryAddScoped<IExternalRagAdapter, MockExternalRagAdapter>();
         services.AddScoped<ExternalRagAnalysisEngine>(serviceProvider =>
             new ExternalRagAnalysisEngine(serviceProvider.GetService<IExternalRagAdapter>()));
         services.AddScoped<IAiAnalysisEngine>(serviceProvider =>

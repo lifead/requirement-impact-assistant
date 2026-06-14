@@ -1,12 +1,16 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using RequirementImpactAssistant.Web.Application.Analysis;
+using RequirementImpactAssistant.Web.Application.Analysis.External;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
+using RequirementImpactAssistant.Web.Extensions;
 
 namespace RequirementImpactAssistant.Tests.Application;
 
@@ -389,6 +393,58 @@ public sealed class AnalysisExecutionServiceTests
                 Assert.False(metadata.ManualContextForwardedToExternalAiOrRag);
                 Assert.Contains(metadata.Warnings, warning => warning.Contains("adapter is not configured", StringComparison.OrdinalIgnoreCase));
                 Assert.Empty(metadata.RetrievedContextItems);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_ExternalRagModeThroughApplicationServicesUsesConfiguredMockAdapter()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var analysis = CreateAnalysis("Gateway migration");
+            var services = new ServiceCollection();
+            services.AddDbContext<ApplicationDbContext>(options =>
+                options.UseSqlite($"Data Source={databasePath}"));
+            services.AddApplicationAnalysis(CreateAnalysisConfiguration());
+
+            using var serviceProvider = services.BuildServiceProvider();
+
+            using (var scope = serviceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            using (var scope = serviceProvider.CreateScope())
+            {
+                var service = scope.ServiceProvider.GetRequiredService<IAnalysisExecutionService>();
+
+                var outcome = await service.RunAsync(analysis.Id, AnalysisMode.ExternalRag);
+
+                Assert.True(outcome.Succeeded);
+                Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
+            }
+
+            using (var scope = serviceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                var savedResult = await dbContext.AiAnalysisResults
+                    .Include(candidate => candidate.Metadata)
+                    .SingleAsync(candidate => candidate.AnalysisId == analysis.Id);
+
+                Assert.Equal(AiAnalysisResultStatus.Completed, savedResult.Status);
+                Assert.Equal(nameof(ExternalRagAnalysisEngine), savedResult.EngineName);
+                Assert.Equal("LocalMockKnowledgeSource", savedResult.ProviderName);
+                Assert.Equal(nameof(MockExternalRagAdapter), savedResult.Metadata.AdapterName);
             }
         }
         finally
@@ -1054,6 +1110,14 @@ public sealed class AnalysisExecutionServiceTests
         new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseSqlite($"Data Source={databasePath}")
             .Options;
+
+    private static IConfiguration CreateAnalysisConfiguration() =>
+        new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiAnalysis:Provider"] = LlmProviderNames.Demo
+            })
+            .Build();
 
     private static void DeleteDatabase(string databasePath)
     {
