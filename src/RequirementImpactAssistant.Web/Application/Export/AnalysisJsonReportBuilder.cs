@@ -122,10 +122,42 @@ public sealed class AnalysisJsonReportBuilder
             RetrievedContextState = metadata.RetrievedContextState.ToString(),
             RetrievedContextLimitations = ToRetrievedContextLimitations(metadata.RetrievedContextState),
             Warnings = ToWarnings(metadata.Warnings),
+            RetrievedContext = ToRetrievedContext(metadata),
             RawResponse = EmptyToNull(result.RawResponse),
             ErrorMessage = EmptyToNull(result.ErrorMessage)
         };
     }
+
+    private static object ToRetrievedContext(AiAnalysisResultMetadata metadata)
+    {
+        var warnings = ToWarnings(metadata.Warnings);
+
+        return new
+        {
+            State = metadata.RetrievedContextState.ToString(),
+            Items = metadata.RetrievedContextItems.Select(ToRetrievedContextItem).ToList(),
+            Limitations = ToRetrievedContextLimitations(metadata.RetrievedContextState),
+            Warnings = warnings
+        };
+    }
+
+    private static object ToRetrievedContextItem(RetrievedContextItem item) =>
+        new
+        {
+            item.SourceTitle,
+            item.SourceId,
+            item.ExternalReference,
+            item.FragmentId,
+            item.Text,
+            item.Excerpt,
+            item.UrlOrReference,
+            item.Rank,
+            item.Score,
+            Provider = item.ProviderName,
+            Adapter = item.AdapterName,
+            Completeness = item.Completeness.ToString(),
+            item.WarningOrLimitationNote
+        };
 
     private static IReadOnlyList<string> ToRetrievedContextLimitations(RetrievedContextState state) =>
         state switch

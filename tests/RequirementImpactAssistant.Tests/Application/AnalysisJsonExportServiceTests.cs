@@ -95,7 +95,13 @@ public sealed class AnalysisJsonExportServiceTests
                 "Retrieved context is unavailable for this saved analysis result.",
                 Assert.Single(aiAnalysisResult.GetProperty("retrievedContextLimitations").EnumerateArray()).GetString());
             Assert.Empty(aiAnalysisResult.GetProperty("warnings").EnumerateArray());
-            Assert.False(aiAnalysisResult.TryGetProperty("retrievedContext", out _));
+            var retrievedContext = aiAnalysisResult.GetProperty("retrievedContext");
+            Assert.Equal("Unavailable", retrievedContext.GetProperty("state").GetString());
+            Assert.Empty(retrievedContext.GetProperty("items").EnumerateArray());
+            Assert.Equal(
+                "Retrieved context is unavailable for this saved analysis result.",
+                Assert.Single(retrievedContext.GetProperty("limitations").EnumerateArray()).GetString());
+            Assert.Empty(retrievedContext.GetProperty("warnings").EnumerateArray());
             Assert.False(aiAnalysisResult.TryGetProperty("items", out _));
         }
         finally
@@ -220,7 +226,7 @@ public sealed class AnalysisJsonExportServiceTests
     }
 
     [Fact]
-    public void Build_IncludesSavedExternalMetadataWithoutRetrievedContextItems()
+    public void Build_IncludesSavedExternalMetadataAndRetrievedContext()
     {
         var analysis = CreateAnalysisGraph();
         analysis.AiAnalysisResult!.ErrorMessage = "Error message remains legacy error data, not a metadata warning.";
@@ -241,11 +247,18 @@ public sealed class AnalysisJsonExportServiceTests
             [
                 new RetrievedContextItem
                 {
-                    SourceTitle = "Out-of-scope Task 4 source title",
-                    Excerpt = "Out-of-scope Task 4 excerpt.",
+                    SourceTitle = "External source title",
+                    SourceId = "SRC-1",
+                    ExternalReference = "REQ-EXT-1",
+                    FragmentId = "fragment-1",
+                    Excerpt = "Saved retrieved context excerpt.",
+                    UrlOrReference = "https://example.test/context/1",
+                    Rank = 2,
+                    Score = 0.875,
                     ProviderName = "neutral-provider",
                     AdapterName = "neutral-adapter",
-                    Completeness = RetrievedContextItemCompleteness.ExcerptOnly
+                    Completeness = RetrievedContextItemCompleteness.ExcerptOnly,
+                    WarningOrLimitationNote = "Only excerpt was saved."
                 }
             ]
         };
@@ -280,10 +293,210 @@ public sealed class AnalysisJsonExportServiceTests
         Assert.Equal(
             "Error message remains legacy error data, not a metadata warning.",
             aiAnalysisResult.GetProperty("errorMessage").GetString());
-        Assert.False(aiAnalysisResult.TryGetProperty("retrievedContext", out _));
+        var retrievedContext = aiAnalysisResult.GetProperty("retrievedContext");
+        Assert.Equal("Partial", retrievedContext.GetProperty("state").GetString());
+        Assert.Equal(
+            "Retrieved context was saved only partially for this analysis result.",
+            Assert.Single(retrievedContext.GetProperty("limitations").EnumerateArray()).GetString());
+        Assert.Equal(
+            "Retrieved context is partial.",
+            Assert.Single(retrievedContext.GetProperty("warnings").EnumerateArray()).GetString());
+
+        var item = Assert.Single(retrievedContext.GetProperty("items").EnumerateArray());
+        Assert.Equal("External source title", item.GetProperty("sourceTitle").GetString());
+        Assert.Equal("SRC-1", item.GetProperty("sourceId").GetString());
+        Assert.Equal("REQ-EXT-1", item.GetProperty("externalReference").GetString());
+        Assert.Equal("fragment-1", item.GetProperty("fragmentId").GetString());
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("text").ValueKind);
+        Assert.Equal("Saved retrieved context excerpt.", item.GetProperty("excerpt").GetString());
+        Assert.Equal("https://example.test/context/1", item.GetProperty("urlOrReference").GetString());
+        Assert.Equal(2, item.GetProperty("rank").GetInt32());
+        Assert.Equal(0.875, item.GetProperty("score").GetDouble());
+        Assert.Equal("neutral-provider", item.GetProperty("provider").GetString());
+        Assert.Equal("neutral-adapter", item.GetProperty("adapter").GetString());
+        Assert.Equal("ExcerptOnly", item.GetProperty("completeness").GetString());
+        Assert.Equal("Only excerpt was saved.", item.GetProperty("warningOrLimitationNote").GetString());
         Assert.False(aiAnalysisResult.TryGetProperty("items", out _));
-        Assert.DoesNotContain("Out-of-scope Task 4 source title", json, StringComparison.Ordinal);
-        Assert.DoesNotContain("Out-of-scope Task 4 excerpt.", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Build_ExportsAvailableRetrievedContextItemsInSavedOrder()
+    {
+        var analysis = CreateAnalysisGraph();
+        analysis.AiAnalysisResult!.Metadata = new AiAnalysisResultMetadata
+        {
+            AnalysisMode = AnalysisMode.ExternalRag,
+            EngineName = "external-analysis-engine",
+            ProviderName = "neutral-provider",
+            AdapterName = "neutral-adapter",
+            ModelWorkflowProfileName = "impact-workflow-profile",
+            RetrievedContextState = RetrievedContextState.Available,
+            RetrievedContextItems =
+            [
+                new RetrievedContextItem
+                {
+                    SourceTitle = "First saved source",
+                    SourceId = "SRC-1",
+                    Text = "Full text from first saved source.",
+                    Rank = 10,
+                    Score = 0.42,
+                    ProviderName = "neutral-provider",
+                    AdapterName = "neutral-adapter",
+                    Completeness = RetrievedContextItemCompleteness.FullText
+                },
+                new RetrievedContextItem
+                {
+                    SourceTitle = "Second saved source",
+                    SourceId = "SRC-2",
+                    Excerpt = "Second saved source excerpt.",
+                    Rank = 1,
+                    Score = 0.99,
+                    ProviderName = "neutral-provider",
+                    AdapterName = "neutral-adapter",
+                    Completeness = RetrievedContextItemCompleteness.ExcerptOnly
+                }
+            ]
+        };
+
+        var retrievedContext = BuildRetrievedContext(analysis);
+        var items = retrievedContext.GetProperty("items").EnumerateArray().ToArray();
+
+        Assert.Equal("Available", retrievedContext.GetProperty("state").GetString());
+        Assert.Empty(retrievedContext.GetProperty("limitations").EnumerateArray());
+        Assert.Equal(
+            ["First saved source", "Second saved source"],
+            items.Select(item => item.GetProperty("sourceTitle").GetString()).ToArray());
+        Assert.Equal(10, items[0].GetProperty("rank").GetInt32());
+        Assert.Equal(1, items[1].GetProperty("rank").GetInt32());
+    }
+
+    [Fact]
+    public void Build_ExportsMetadataOnlyRetrievedContextWithoutTextOrExcerpt()
+    {
+        var analysis = CreateAnalysisGraph();
+        analysis.AiAnalysisResult!.Metadata = new AiAnalysisResultMetadata
+        {
+            AnalysisMode = AnalysisMode.ExternalRag,
+            EngineName = "external-analysis-engine",
+            ProviderName = "neutral-provider",
+            AdapterName = "neutral-adapter",
+            ModelWorkflowProfileName = "impact-workflow-profile",
+            RetrievedContextState = RetrievedContextState.MetadataOnly,
+            RetrievedContextItems =
+            [
+                new RetrievedContextItem
+                {
+                    SourceTitle = "Metadata-only source",
+                    SourceId = "META-1",
+                    ExternalReference = "external-meta-1",
+                    UrlOrReference = "kb://meta/1",
+                    ProviderName = "neutral-provider",
+                    AdapterName = "neutral-adapter",
+                    Completeness = RetrievedContextItemCompleteness.MetadataOnly,
+                    WarningOrLimitationNote = "Text was not saved."
+                }
+            ]
+        };
+
+        var retrievedContext = BuildRetrievedContext(analysis);
+        var item = Assert.Single(retrievedContext.GetProperty("items").EnumerateArray());
+
+        Assert.Equal("MetadataOnly", retrievedContext.GetProperty("state").GetString());
+        Assert.Equal(
+            "Only retrieved context metadata was saved for this analysis result.",
+            Assert.Single(retrievedContext.GetProperty("limitations").EnumerateArray()).GetString());
+        Assert.Equal("Metadata-only source", item.GetProperty("sourceTitle").GetString());
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("text").ValueKind);
+        Assert.Equal(JsonValueKind.Null, item.GetProperty("excerpt").ValueKind);
+        Assert.Equal("MetadataOnly", item.GetProperty("completeness").GetString());
+        Assert.Equal("Text was not saved.", item.GetProperty("warningOrLimitationNote").GetString());
+    }
+
+    [Fact]
+    public void Build_ExportsUnavailableRetrievedContextWithoutArtificialItems()
+    {
+        var analysis = CreateAnalysisGraph();
+        analysis.AiAnalysisResult!.Metadata = new AiAnalysisResultMetadata
+        {
+            AnalysisMode = AnalysisMode.ExternalRag,
+            EngineName = "external-analysis-engine",
+            ProviderName = "neutral-provider",
+            AdapterName = "neutral-adapter",
+            ModelWorkflowProfileName = "impact-workflow-profile",
+            RetrievedContextState = RetrievedContextState.Unavailable,
+            Warnings =
+            [
+                "External retrieval was unavailable."
+            ]
+        };
+
+        var retrievedContext = BuildRetrievedContext(analysis);
+
+        Assert.Equal("Unavailable", retrievedContext.GetProperty("state").GetString());
+        Assert.Empty(retrievedContext.GetProperty("items").EnumerateArray());
+        Assert.Equal(
+            "Retrieved context is unavailable for this saved analysis result.",
+            Assert.Single(retrievedContext.GetProperty("limitations").EnumerateArray()).GetString());
+        Assert.Equal(
+            "External retrieval was unavailable.",
+            Assert.Single(retrievedContext.GetProperty("warnings").EnumerateArray()).GetString());
+    }
+
+    [Fact]
+    public void Build_ExportsDirectLlmRetrievedContextWithoutArtificialItems()
+    {
+        var analysis = CreateAnalysisGraph();
+        analysis.AiAnalysisResult!.Metadata = AiAnalysisResultMetadata.CreateDefaultDirectLlm(
+            engineName: "direct-engine",
+            providerName: "direct-provider",
+            modelWorkflowProfileName: "direct-model");
+
+        var retrievedContext = BuildRetrievedContext(analysis);
+
+        Assert.Equal("Unavailable", retrievedContext.GetProperty("state").GetString());
+        Assert.Empty(retrievedContext.GetProperty("items").EnumerateArray());
+        Assert.Equal(
+            "Retrieved context is unavailable for this saved analysis result.",
+            Assert.Single(retrievedContext.GetProperty("limitations").EnumerateArray()).GetString());
+    }
+
+    [Fact]
+    public void Build_ExportsLegacyMvp0RetrievedContextWithoutArtificialItems()
+    {
+        var analysis = CreateAnalysisGraph();
+        analysis.AiAnalysisResult = new AiAnalysisResult
+        {
+            AnalysisId = analysis.Id,
+            Status = AiAnalysisResultStatus.Completed,
+            GeneratedAt = new DateTimeOffset(2026, 06, 13, 12, 20, 0, TimeSpan.Zero),
+            EngineName = "legacy-engine",
+            ProviderName = "legacy-provider",
+            ModelName = "legacy-model",
+            PromptVersion = "mvp-v0",
+            InputSnapshot = "{ \"legacy\": true }",
+            RawResponse = "{ \"legacy\": \"response\" }",
+            ImpactMap = analysis.AiAnalysisResult!.ImpactMap,
+            ErrorMessage = string.Empty
+        };
+
+        var json = new AnalysisJsonReportBuilder().Build(analysis, DateTimeOffset.UtcNow);
+
+        using var document = JsonDocument.Parse(json);
+        var aiAnalysisResult = document.RootElement.GetProperty("aiAnalysisResult");
+        var retrievedContext = aiAnalysisResult.GetProperty("retrievedContext");
+
+        Assert.Equal("DirectLlm", aiAnalysisResult.GetProperty("analysisMode").GetString());
+        Assert.Equal(
+            "legacy-engine",
+            aiAnalysisResult.GetProperty("analysisEngine").GetProperty("name").GetString());
+        Assert.Equal(
+            "legacy-provider",
+            aiAnalysisResult.GetProperty("provider").GetProperty("name").GetString());
+        Assert.Equal(
+            "legacy-model",
+            aiAnalysisResult.GetProperty("modelWorkflowProfile").GetProperty("name").GetString());
+        Assert.Equal("Unavailable", retrievedContext.GetProperty("state").GetString());
+        Assert.Empty(retrievedContext.GetProperty("items").EnumerateArray());
     }
 
     [Fact]
@@ -426,6 +639,18 @@ public sealed class AnalysisJsonExportServiceTests
         {
             DeleteDatabase(databasePath);
         }
+    }
+
+    private static JsonElement BuildRetrievedContext(Analysis analysis)
+    {
+        var json = new AnalysisJsonReportBuilder().Build(analysis, DateTimeOffset.UtcNow);
+
+        using var document = JsonDocument.Parse(json);
+
+        return document.RootElement
+            .GetProperty("aiAnalysisResult")
+            .GetProperty("retrievedContext")
+            .Clone();
     }
 
     private static async Task SaveAnalysisAsync(DbContextOptions<ApplicationDbContext> options, Analysis analysis)
