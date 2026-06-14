@@ -23,7 +23,7 @@ public sealed class AiAnalysisResult
 
     public AiAnalysisResultMetadata Metadata
     {
-        get => metadata ??= CreateDefaultMetadata();
+        get => EnsureMetadata();
         set => metadata = value ?? CreateDefaultMetadata();
     }
 
@@ -42,4 +42,29 @@ public sealed class AiAnalysisResult
             EngineName,
             ProviderName,
             ModelName);
+
+    private AiAnalysisResultMetadata EnsureMetadata()
+    {
+        metadata ??= CreateDefaultMetadata();
+
+        if (metadata.AnalysisMode == AnalysisMode.DirectLlm)
+        {
+            if (string.IsNullOrWhiteSpace(metadata.EngineName) && !string.IsNullOrWhiteSpace(EngineName))
+            {
+                metadata.EngineName = EngineName;
+            }
+
+            if (string.IsNullOrWhiteSpace(metadata.ProviderName) && !string.IsNullOrWhiteSpace(ProviderName))
+            {
+                metadata.ProviderName = ProviderName;
+            }
+
+            if (string.IsNullOrWhiteSpace(metadata.ModelWorkflowProfileName) && !string.IsNullOrWhiteSpace(ModelName))
+            {
+                metadata.ModelWorkflowProfileName = ModelName;
+            }
+        }
+
+        return metadata;
+    }
 }

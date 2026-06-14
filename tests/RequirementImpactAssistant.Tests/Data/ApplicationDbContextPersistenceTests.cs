@@ -1,5 +1,7 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
@@ -9,6 +11,8 @@ namespace RequirementImpactAssistant.Tests.Data;
 
 public sealed class ApplicationDbContextPersistenceTests
 {
+    private const string InitialMvpSchemaMigration = "20260613120005_InitialMvpSchema";
+
     [Fact]
     public async Task MvpDataGraph_CanBeSavedAndLoadedFromSqlite()
     {
@@ -120,10 +124,249 @@ public sealed class ApplicationDbContextPersistenceTests
         }
     }
 
+    [Fact]
+    public async Task Stage1AiAnalysisResultMetadata_CanBeSavedAndLoadedFromSqlite()
+    {
+        var databasePath = Path.Combine(
+            Path.GetTempPath(),
+            $"requirement-impact-assistant-stage1-{Guid.NewGuid():N}.db");
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysisGraph();
+            var analysisId = analysis.Id;
+            var result = analysis.AiAnalysisResult!;
+            result.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-rag-engine",
+                ProviderName = "neutral-provider",
+                AdapterName = "neutral-adapter",
+                ModelWorkflowProfileName = "impact-workflow-profile",
+                RetrievedContextState = RetrievedContextState.Partial,
+                Warnings =
+                [
+                    "Retrieved context was partially available.",
+                    "Adapter returned normalized metadata."
+                ],
+                ManualContextForwardedToExternalAiOrRag = true,
+                RetrievedContextItems =
+                [
+                    new RetrievedContextItem
+                    {
+                        SourceTitle = "Gateway requirements note",
+                        SourceId = "REQ-GW-001",
+                        ExternalReference = "external-ref-42",
+                        FragmentId = "chunk-7",
+                        Text = null,
+                        Excerpt = "Gateway consumers depend on the existing response contract.",
+                        UrlOrReference = "kb://gateway/requirements",
+                        Rank = 1,
+                        Score = 0.87,
+                        ProviderName = "neutral-provider",
+                        AdapterName = "neutral-adapter",
+                        Completeness = RetrievedContextItemCompleteness.ExcerptOnly,
+                        WarningOrLimitationNote = "Full text was not returned by the external circuit."
+                    }
+                ]
+            };
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var loadedAnalysis = await dbContext.Analyses
+                    .AsSplitQuery()
+                    .Include(item => item.AiAnalysisResult)
+                    .SingleAsync(item => item.Id == analysisId);
+
+                Assert.NotNull(loadedAnalysis.AiAnalysisResult);
+                var loadedMetadata = loadedAnalysis.AiAnalysisResult.Metadata;
+
+                Assert.Equal(AnalysisMode.ExternalRag, loadedMetadata.AnalysisMode);
+                Assert.Equal("external-rag-engine", loadedMetadata.EngineName);
+                Assert.Equal("neutral-provider", loadedMetadata.ProviderName);
+                Assert.Equal("neutral-adapter", loadedMetadata.AdapterName);
+                Assert.Equal("impact-workflow-profile", loadedMetadata.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.Partial, loadedMetadata.RetrievedContextState);
+                Assert.True(loadedMetadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Equal(
+                    ["Retrieved context was partially available.", "Adapter returned normalized metadata."],
+                    loadedMetadata.Warnings);
+
+                var loadedItem = Assert.Single(loadedMetadata.RetrievedContextItems);
+                Assert.Equal("Gateway requirements note", loadedItem.SourceTitle);
+                Assert.Equal("REQ-GW-001", loadedItem.SourceId);
+                Assert.Equal("external-ref-42", loadedItem.ExternalReference);
+                Assert.Equal("chunk-7", loadedItem.FragmentId);
+                Assert.Null(loadedItem.Text);
+                Assert.Equal(
+                    "Gateway consumers depend on the existing response contract.",
+                    loadedItem.Excerpt);
+                Assert.Equal("kb://gateway/requirements", loadedItem.UrlOrReference);
+                Assert.Equal(1, loadedItem.Rank);
+                Assert.Equal(0.87, loadedItem.Score);
+                Assert.Equal("neutral-provider", loadedItem.ProviderName);
+                Assert.Equal("neutral-adapter", loadedItem.AdapterName);
+                Assert.Equal(RetrievedContextItemCompleteness.ExcerptOnly, loadedItem.Completeness);
+                Assert.Equal(
+                    "Full text was not returned by the external circuit.",
+                    loadedItem.WarningOrLimitationNote);
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task LegacyMvp0AiAnalysisResult_CanBeReadAfterStage1MigrationsWithoutSyntheticRetrievedContext()
+    {
+        var databasePath = Path.Combine(
+            Path.GetTempPath(),
+            $"requirement-impact-assistant-legacy-{Guid.NewGuid():N}.db");
+        var analysisId = Guid.NewGuid();
+        var resultId = Guid.NewGuid();
+        var fixedAt = new DateTimeOffset(2026, 06, 13, 13, 00, 00, TimeSpan.Zero);
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.GetService<IMigrator>().MigrateAsync(InitialMvpSchemaMigration);
+            }
+
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+                await InsertLegacyMvp0AnalysisAsync(connection, analysisId, resultId, fixedAt);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var loadedAnalysis = await dbContext.Analyses
+                    .Include(item => item.AiAnalysisResult)
+                    .SingleAsync(item => item.Id == analysisId);
+
+                Assert.Equal("Legacy MVP-0 analysis", loadedAnalysis.Title);
+                Assert.NotNull(loadedAnalysis.AiAnalysisResult);
+
+                var loadedResult = loadedAnalysis.AiAnalysisResult;
+                Assert.Equal(resultId, loadedResult.Id);
+                Assert.Equal(AiAnalysisResultStatus.Completed, loadedResult.Status);
+                Assert.Equal("legacy-engine", loadedResult.EngineName);
+                Assert.Equal("legacy-provider", loadedResult.ProviderName);
+                Assert.Equal("legacy-model", loadedResult.ModelName);
+
+                var loadedMetadata = loadedResult.Metadata;
+                Assert.Equal(AnalysisMode.DirectLlm, loadedMetadata.AnalysisMode);
+                Assert.Equal("legacy-engine", loadedMetadata.EngineName);
+                Assert.Equal("legacy-provider", loadedMetadata.ProviderName);
+                Assert.Null(loadedMetadata.AdapterName);
+                Assert.Equal("legacy-model", loadedMetadata.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.Unavailable, loadedMetadata.RetrievedContextState);
+                Assert.False(loadedMetadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Empty(loadedMetadata.Warnings);
+                Assert.Empty(loadedMetadata.RetrievedContextItems);
+            }
+
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM RetrievedContextItems;";
+
+                var retrievedContextItemCount = (long)(await command.ExecuteScalarAsync() ?? 0L);
+                Assert.Equal(0L, retrievedContextItemCount);
+            }
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+
+            if (File.Exists(databasePath))
+            {
+                File.Delete(databasePath);
+            }
+        }
+    }
+
     private static DbContextOptions<ApplicationDbContext> CreateOptions(string databasePath) =>
         new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseSqlite($"Data Source={databasePath}")
             .Options;
+
+    private static async Task InsertLegacyMvp0AnalysisAsync(
+        SqliteConnection connection,
+        Guid analysisId,
+        Guid resultId,
+        DateTimeOffset fixedAt)
+    {
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                INSERT INTO Analyses
+                    (Id, Title, Status, OriginalDescription, ProjectRequest, SituationDescription, ChangeSource, CreatedAt, UpdatedAt, FixedAt)
+                VALUES
+                    ($id, $title, $status, $originalDescription, $projectRequest, $situationDescription, $changeSource, $createdAt, $updatedAt, NULL);
+                """;
+            command.Parameters.AddWithValue("$id", analysisId);
+            command.Parameters.AddWithValue("$title", "Legacy MVP-0 analysis");
+            command.Parameters.AddWithValue("$status", AnalysisStatus.NeedsExpertEvaluation.ToString());
+            command.Parameters.AddWithValue("$originalDescription", "Legacy original description.");
+            command.Parameters.AddWithValue("$projectRequest", "Legacy project request.");
+            command.Parameters.AddWithValue("$situationDescription", "Legacy situation description.");
+            command.Parameters.AddWithValue("$changeSource", "Legacy change source.");
+            command.Parameters.AddWithValue("$createdAt", fixedAt);
+            command.Parameters.AddWithValue("$updatedAt", fixedAt);
+
+            await command.ExecuteNonQueryAsync();
+        }
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+                INSERT INTO AiAnalysisResults
+                    (Id, AnalysisId, Status, GeneratedAt, EngineName, ProviderName, ModelName, PromptVersion, InputSnapshot, RawResponse, ErrorMessage)
+                VALUES
+                    ($id, $analysisId, $status, $generatedAt, $engineName, $providerName, $modelName, $promptVersion, $inputSnapshot, $rawResponse, $errorMessage);
+                """;
+            command.Parameters.AddWithValue("$id", resultId);
+            command.Parameters.AddWithValue("$analysisId", analysisId);
+            command.Parameters.AddWithValue("$status", AiAnalysisResultStatus.Completed.ToString());
+            command.Parameters.AddWithValue("$generatedAt", fixedAt);
+            command.Parameters.AddWithValue("$engineName", "legacy-engine");
+            command.Parameters.AddWithValue("$providerName", "legacy-provider");
+            command.Parameters.AddWithValue("$modelName", "legacy-model");
+            command.Parameters.AddWithValue("$promptVersion", "legacy-prompt");
+            command.Parameters.AddWithValue("$inputSnapshot", "{ \"legacy\": true }");
+            command.Parameters.AddWithValue("$rawResponse", "{ \"status\": \"completed\" }");
+            command.Parameters.AddWithValue("$errorMessage", string.Empty);
+
+            await command.ExecuteNonQueryAsync();
+        }
+    }
 
     private static Analysis CreateAnalysisGraph()
     {

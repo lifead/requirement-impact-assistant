@@ -21,13 +21,13 @@ public sealed class AiAnalysisResultMetadata
 
     public List<RetrievedContextItem> RetrievedContextItems
     {
-        get => retrievedContextItems;
+        get => retrievedContextItems ??= [];
         set => retrievedContextItems = value ?? [];
     }
 
     public List<string> Warnings
     {
-        get => warnings;
+        get => warnings ??= [];
         set => warnings = value ?? [];
     }
 

@@ -68,6 +68,64 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
         ConfigureExpertConclusion(modelBuilder.Entity<ExpertConclusion>());
     }
 
+    public override int SaveChanges()
+    {
+        AssignRetrievedContextItemOrdinals();
+
+        return base.SaveChanges();
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        AssignRetrievedContextItemOrdinals();
+
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        AssignRetrievedContextItemOrdinals();
+
+        return base.SaveChangesAsync(cancellationToken);
+    }
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        AssignRetrievedContextItemOrdinals();
+
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void AssignRetrievedContextItemOrdinals()
+    {
+        ChangeTracker.DetectChanges();
+
+        foreach (var resultEntry in ChangeTracker.Entries<AiAnalysisResult>())
+        {
+            if (resultEntry.State is EntityState.Detached or EntityState.Deleted)
+            {
+                continue;
+            }
+
+            var ordinal = 0;
+
+            foreach (var contextItem in resultEntry.Entity.Metadata.RetrievedContextItems)
+            {
+                var contextItemEntry = Entry(contextItem);
+
+                if (contextItemEntry.State is EntityState.Detached or EntityState.Deleted)
+                {
+                    ordinal++;
+                    continue;
+                }
+
+                contextItemEntry.Property("Ordinal").CurrentValue = ordinal++;
+            }
+        }
+    }
+
     private static void ConfigureAnalysis(EntityTypeBuilder<Analysis> entity)
     {
         entity.ToTable("Analyses");
@@ -253,7 +311,8 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
 
         item.Property<Guid>("AiAnalysisResultId");
 
-        item.Property<int>("Ordinal");
+        item.Property<int>("Ordinal")
+            .ValueGeneratedNever();
 
         item.HasKey("AiAnalysisResultId", "Ordinal");
 
