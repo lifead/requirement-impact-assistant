@@ -94,7 +94,125 @@ public sealed class MockExternalRagAdapterTests
         Assert.Equal(first.ImpactMap.Risks.Single().Description, second.ImpactMap.Risks.Single().Description);
     }
 
-    private static ExternalRagAdapterRequest CreateRequest()
+    [Fact]
+    public async Task AnalyzeAsync_WithMetadataOnlyProfileReturnsMetadataOnlyRetrievedContext()
+    {
+        var adapter = new MockExternalRagAdapter();
+
+        var response = await adapter.AnalyzeAsync(CreateRequest("metadata-only"));
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
+        Assert.NotNull(response.ImpactMap);
+        Assert.Equal("metadata-only", response.Metadata.ProfileName);
+        Assert.Equal("completed-with-metadata-only-context", response.Metadata.SanitizedProperties["responseShape"]);
+        Assert.Equal(RetrievedContextState.MetadataOnly, response.RetrievedContextState);
+        Assert.Equal(["Retrieved context contains source metadata only; source text was not returned."], response.Warnings);
+        Assert.Empty(response.Errors);
+
+        var item = Assert.Single(response.RetrievedContextItems);
+        Assert.Equal("Local demo integration inventory", item.SourceTitle);
+        Assert.Equal("local-demo-INV-003", item.ExternalReference);
+        Assert.Equal(RetrievedContextItemCompleteness.MetadataOnly, item.Completeness);
+        Assert.Null(item.Text);
+        Assert.Null(item.Excerpt);
+        Assert.Equal("Only source metadata is available in this mock scenario.", item.WarningOrLimitationNote);
+
+        AssertDiagnosticSnapshot(
+            response,
+            expectedStatus: "completedWithWarnings",
+            expectedProfile: "metadata-only",
+            expectedRetrievedContextState: "MetadataOnly",
+            expectedRetrievedContextItemCount: 1);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WithUnavailableProfileReturnsStructuredResultWithoutRetrievedContext()
+    {
+        var adapter = new MockExternalRagAdapter();
+
+        var response = await adapter.AnalyzeAsync(CreateRequest("unavailable"));
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
+        Assert.NotNull(response.ImpactMap);
+        Assert.Equal("unavailable", response.Metadata.ProfileName);
+        Assert.Equal("completed-with-unavailable-context", response.Metadata.SanitizedProperties["responseShape"]);
+        Assert.Equal(RetrievedContextState.Unavailable, response.RetrievedContextState);
+        Assert.Empty(response.RetrievedContextItems);
+        Assert.Equal(
+            ["Structured impact analysis is available, but retrieved context is unavailable in this mock scenario."],
+            response.Warnings);
+        Assert.Empty(response.Errors);
+
+        AssertDiagnosticSnapshot(
+            response,
+            expectedStatus: "completedWithWarnings",
+            expectedProfile: "unavailable",
+            expectedRetrievedContextState: "Unavailable",
+            expectedRetrievedContextItemCount: 0);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WithPartialProfileReturnsPartialResultWithWarnings()
+    {
+        var adapter = new MockExternalRagAdapter();
+
+        var response = await adapter.AnalyzeAsync(CreateRequest("partial"));
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.Partial, response.Status);
+        Assert.NotNull(response.ImpactMap);
+        Assert.Equal("partial", response.Metadata.ProfileName);
+        Assert.Equal("partial-with-warnings", response.Metadata.SanitizedProperties["responseShape"]);
+        Assert.Equal(RetrievedContextState.Partial, response.RetrievedContextState);
+        Assert.Equal(["Retrieved context is partial; full source text was not returned."], response.Warnings);
+        Assert.Empty(response.Errors);
+
+        var item = Assert.Single(response.RetrievedContextItems);
+        Assert.Equal("Local demo requirement excerpt", item.SourceTitle);
+        Assert.Equal("local-demo-REQ-004", item.ExternalReference);
+        Assert.Equal("The requested change may affect an integration boundary.", item.Excerpt);
+        Assert.Null(item.Text);
+        Assert.Equal(RetrievedContextItemCompleteness.ExcerptOnly, item.Completeness);
+        Assert.Equal("Full source text is not available in this mock scenario.", item.WarningOrLimitationNote);
+
+        AssertDiagnosticSnapshot(
+            response,
+            expectedStatus: "partial",
+            expectedProfile: "partial",
+            expectedRetrievedContextState: "Partial",
+            expectedRetrievedContextItemCount: 1);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WithFailedProfileReturnsFailedResponseWithoutImpactMap()
+    {
+        var adapter = new MockExternalRagAdapter();
+
+        var response = await adapter.AnalyzeAsync(CreateRequest("failed"));
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.Failed, response.Status);
+        Assert.Null(response.ImpactMap);
+        Assert.Equal("failed", response.Metadata.ProfileName);
+        Assert.Equal("failed-with-sanitized-error", response.Metadata.SanitizedProperties["responseShape"]);
+        Assert.Equal(RetrievedContextState.Unavailable, response.RetrievedContextState);
+        Assert.Empty(response.RetrievedContextItems);
+        Assert.Equal(["Local mock external analysis returned a controlled failed response."], response.Warnings);
+
+        var error = Assert.Single(response.Errors);
+        Assert.Equal("mock_external_failure", error.Code);
+        Assert.Equal("Local mock external analysis did not produce an impact map.", error.Message);
+        Assert.Equal(
+            "This deterministic scenario is intended for failed response handling tests.",
+            error.DiagnosticDetails);
+
+        AssertDiagnosticSnapshot(
+            response,
+            expectedStatus: "failed",
+            expectedProfile: "failed",
+            expectedRetrievedContextState: "Unavailable",
+            expectedRetrievedContextItemCount: 0);
+    }
+
+    private static ExternalRagAdapterRequest CreateRequest(string? requestedProfileName = null)
     {
         var snapshot = new AnalysisInputSnapshot(
             AnalysisId: Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
@@ -125,7 +243,26 @@ public sealed class MockExternalRagAdapterTests
             BoundaryNotice: AnalysisBoundaryNotice.Default,
             ExecutionMetadata: new ExternalRagRequestMetadata(
                 EngineName: nameof(ExternalRagAnalysisEngine),
-                RequestedProfileName: null,
+                RequestedProfileName: requestedProfileName,
                 SanitizedProperties: new Dictionary<string, string>()));
+    }
+
+    private static void AssertDiagnosticSnapshot(
+        ExternalRagAdapterResponse response,
+        string expectedStatus,
+        string expectedProfile,
+        string expectedRetrievedContextState,
+        int expectedRetrievedContextItemCount)
+    {
+        Assert.NotNull(response.SanitizedDiagnosticSnapshot);
+        using var document = JsonDocument.Parse(response.SanitizedDiagnosticSnapshot);
+        var root = document.RootElement;
+        Assert.Equal(expectedStatus, root.GetProperty("status").GetString());
+        Assert.Equal("LocalMockKnowledgeSource", root.GetProperty("provider").GetString());
+        Assert.Equal(nameof(MockExternalRagAdapter), root.GetProperty("adapter").GetString());
+        Assert.Equal(expectedProfile, root.GetProperty("profile").GetString());
+        Assert.Equal(expectedRetrievedContextState, root.GetProperty("retrievedContextState").GetString());
+        Assert.Equal(expectedRetrievedContextItemCount, root.GetProperty("retrievedContextItemCount").GetInt32());
+        Assert.Equal("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", root.GetProperty("correlationId").GetGuid().ToString());
     }
 }
