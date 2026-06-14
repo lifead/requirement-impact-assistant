@@ -78,12 +78,20 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
         {
             AnalysisId = analysis.Id
         };
+        var engineName = _analysisEngine.GetType().Name;
+        var providerName = _options.Provider;
+        var modelName = ResolveModelName(_options);
 
         result.Status = resultStatus;
         result.GeneratedAt = DateTimeOffset.UtcNow;
-        result.EngineName = _analysisEngine.GetType().Name;
-        result.ProviderName = _options.Provider;
-        result.ModelName = ResolveModelName(_options);
+        result.EngineName = engineName;
+        result.ProviderName = providerName;
+        result.ModelName = modelName;
+        result.Metadata = AiAnalysisResultMetadata.CreateDefaultDirectLlm(
+            engineName,
+            providerName,
+            modelName,
+            GetDirectLlmWarnings(response));
         result.PromptVersion = PromptVersion;
         result.InputSnapshot = request.InputSnapshotJson;
         result.RawResponse = response.RawResponse ?? string.Empty;
@@ -135,6 +143,11 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
     private static bool IsInvalidResponse(AiAnalysisResponse response) =>
         response.Errors.Any(error =>
             error.Contains("LLM response is invalid", StringComparison.OrdinalIgnoreCase));
+
+    private static IReadOnlyList<string> GetDirectLlmWarnings(AiAnalysisResponse response) =>
+        response.Status == AiAnalysisResponseStatus.Partial
+            ? response.Errors
+            : [];
 
     private static string ResolveModelName(AiAnalysisOptions options)
     {

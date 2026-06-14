@@ -85,6 +85,86 @@ public sealed class AnalysisExecutionServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_PersistsDirectLlmMetadataWithoutRetrievedContextItems()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis("Gateway migration");
+            var warning = "provider returned partial diagnostic";
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            var provider = new CapturingLlmProvider(new LlmProviderResponse(
+                LlmProviderResponseStatus.Partial,
+                CreateImpactMap(),
+                "raw partial direct llm response",
+                [warning]));
+            var engine = new DirectLlmAnalysisEngine(
+                provider,
+                Options.Create(new AiAnalysisOptions
+                {
+                    Provider = LlmProviderNames.Demo
+                }));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(dbContext, new CapturingAssembler(), engine);
+
+                var outcome = await service.RunAsync(analysis.Id);
+
+                Assert.True(outcome.Succeeded);
+                Assert.Equal(AiAnalysisResultStatus.CompletedWithWarnings, outcome.ResultStatus);
+            }
+
+            Assert.Equal(1, provider.CallCount);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var saved = await dbContext.Analyses
+                    .AsSplitQuery()
+                    .Include(candidate => candidate.AiAnalysisResult)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.NotNull(saved.AiAnalysisResult);
+                var metadata = saved.AiAnalysisResult.Metadata;
+
+                Assert.Equal(AnalysisMode.DirectLlm, metadata.AnalysisMode);
+                Assert.Equal(nameof(DirectLlmAnalysisEngine), metadata.EngineName);
+                Assert.Equal(LlmProviderNames.Demo, metadata.ProviderName);
+                Assert.Null(metadata.AdapterName);
+                Assert.Equal("demo-deterministic", metadata.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
+                Assert.False(metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Equal([warning], metadata.Warnings);
+                Assert.Empty(metadata.RetrievedContextItems);
+            }
+
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM RetrievedContextItems;";
+
+                var retrievedContextItemCount = (long)(await command.ExecuteScalarAsync() ?? 0L);
+                Assert.Equal(0L, retrievedContextItemCount);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_DoesNotCallEngineWhenMinimumInputIsMissing()
     {
         var databasePath = CreateDatabasePath();
@@ -628,6 +708,23 @@ public sealed class AnalysisExecutionServiceTests
 
         public Task<AiAnalysisResponse> AnalyzeAsync(
             AiAnalysisRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            LastRequest = request;
+
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class CapturingLlmProvider(LlmProviderResponse response) : ILlmProvider
+    {
+        public int CallCount { get; private set; }
+
+        public LlmProviderRequest? LastRequest { get; private set; }
+
+        public Task<LlmProviderResponse> CompleteAsync(
+            LlmProviderRequest request,
             CancellationToken cancellationToken = default)
         {
             CallCount++;
