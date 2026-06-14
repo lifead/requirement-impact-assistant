@@ -8,8 +8,8 @@
 
 Основанием для документа являются:
 
-- `docs/program/initial-concept.md`;
-- `docs/program/clarification-decisions.md`.
+- `initial-concept.md`;
+- `clarification-decisions.md`.
 
 Главная проверяемая идея UI: пользователь видит не изолированный чат с LLM и не систему управления задачами, а последовательный контур подготовки управленческой информации:
 

@@ -6,8 +6,8 @@
 
 Основание:
 
-- `docs/program/requirements-draft.md`;
-- `docs/program/technical-design.md`.
+- `requirements-draft.md`;
+- `technical-design.md`.
 
 Перед подготовкой плана требования прошли review и были приняты как основание для технического проектирования. Технический проект прошел review и был принят как основание для implementation planning.
 

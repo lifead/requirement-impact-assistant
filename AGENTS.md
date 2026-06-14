@@ -41,11 +41,11 @@
 - Общая карта workflow: [docs/workflow/README.md](docs/workflow/README.md).
 - Роли и чеклисты этапов: [docs/workflow/checklists.md](docs/workflow/checklists.md).
 - Полный цикл разработки: [docs/workflow/development-cycle.md](docs/workflow/development-cycle.md).
-- Начальная концепция: [docs/program/initial-concept.md](docs/program/initial-concept.md).
-- Уточнения и решения: [docs/program/clarification-decisions.md](docs/program/clarification-decisions.md).
-- Черновик требований: [docs/program/requirements-draft.md](docs/program/requirements-draft.md).
-- Технический проект: [docs/program/technical-design.md](docs/program/technical-design.md).
-- План реализации: [docs/program/implementation-plan.md](docs/program/implementation-plan.md).
+- Начальная концепция: [docs/program/mvp0/initial-concept.md](docs/program/mvp0/initial-concept.md).
+- Уточнения и решения: [docs/program/mvp0/clarification-decisions.md](docs/program/mvp0/clarification-decisions.md).
+- Черновик требований: [docs/program/mvp0/requirements-draft.md](docs/program/mvp0/requirements-draft.md).
+- Технический проект: [docs/program/mvp0/technical-design.md](docs/program/mvp0/technical-design.md).
+- План реализации: [docs/program/mvp0/implementation-plan.md](docs/program/mvp0/implementation-plan.md).
 
 ## Правила работы
 

@@ -1,6 +1,6 @@
 # End-to-end smoke checklist for MVP flow
 
-Task: Task 22 from `docs/program/implementation-plan.md`.
+Task: Task 22 from `implementation-plan.md`.
 
 This checklist verifies the full MVP path without DeepSeek, user secrets, external LLM providers, external services, or network access. The scenario uses `DirectLlmAnalysisEngine` with the local demo provider.
 

@@ -6,10 +6,10 @@
 
 Документ подготовлен после review требований и опирается на:
 
-- `docs/program/initial-concept.md`;
-- `docs/program/clarification-decisions.md`;
-- `docs/program/requirements-draft.md`;
-- `docs/program/ui-concept.md`.
+- `initial-concept.md`;
+- `clarification-decisions.md`;
+- `requirements-draft.md`;
+- `ui-concept.md`.
 
 Документ не является реализацией, implementation-plan, перечнем task, пользовательскими историями или тестовым планом. Его задача - выбрать техническую рамку MVP, основные модули, модель данных, способ интеллектуального анализа, сохранение результата и экспорт так, чтобы программа оставалась небольшой, демонстрируемой, пригодной для главы 4 диссертации и потенциальной регистрации как программа для ЭВМ.
 
