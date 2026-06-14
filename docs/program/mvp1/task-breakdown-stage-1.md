@@ -193,139 +193,28 @@ task review -> implementation -> code review -> commit -> next task
 - появилась логика поиска или ранжирования внутри приложения;
 - retrieved context item связан с управленческим решением, а не с предварительным AI/RAG результатом.
 
-## Task 4a. Подготовить persistence mapping для analysis metadata без migration
+## Task 4a. Добавить persistence для analysis metadata с EF migration
 
-**Цель:** подготовить минимальный persistence mapping для metadata результата анализа без изменения схемы БД через migration и без round-trip логики repository/application service.
+**Цель:** добавить коммитопригодное persistence-представление metadata результата анализа вместе с EF/SQLite migration, чтобы mainline не содержал EF-visible mapping, ожидающий отсутствующие колонки.
 
 **Зависимости:** Task 2.
 
 **Входит:**
 
-- минимальное расширение persistence entity/configuration для metadata результата анализа;
-- mapping-level представление:
+- EF/entity configuration для metadata-level fields результата анализа;
+- EF/SQLite migration и snapshot/schema changes для metadata columns;
+- schema-level представление:
   - analysis mode;
   - engine/provider/adapter/model/workflow/profile metadata;
   - retrieved context state как metadata-level значение;
   - warnings;
   - manual-context-to-external flag;
-- compile-level проверка mapping/configuration без применения migration.
+- model/migration tests, если в проекте уже есть соответствующий уровень проверки или он нужен для покрытия migration;
+- `dotnet build` и полный `dotnet test`.
 
 **Не входит:**
 
 - retrieved context item storage;
-- EF/SQLite migration;
-- round-trip repository/service logic;
-- legacy-read tests;
-- точное проектирование отдельной многоуровневой БД-модели;
-- история всех запусков анализа;
-- новая audit-система;
-- export;
-- UI;
-- adapter contract, Dify/mock adapter, внешний вызов, RAG, embeddings, rerank или vector database.
-
-**Ожидаемый diff:**
-
-- изменения persistence entity/configuration только для analysis metadata Stage 1;
-- минимальные compile/mapping tests, если такие уже приняты в проекте;
-- без migration files;
-- без изменений Razor Pages, exporters, adapters и MVP-0 документов.
-
-**Проверки:**
-
-- `dotnet build`;
-- `dotnet test`, если затронутые mapping tests уже есть или добавлены минимально;
-- ручная проверка diff на отсутствие migration, retrieved context item storage, UI/export/adapter кода и Dify-specific schema.
-
-**Критерии Done:**
-
-- persistence mapping готов представить analysis metadata Stage 1;
-- mapping не требует retrieved context item storage;
-- migration не добавлена;
-- существующие MVP-0 mapping/build сценарии не ломаются.
-
-**Red flags для review:**
-
-- вместе с metadata mapping добавлено хранение retrieved context items;
-- появилась migration или snapshot-изменение схемы;
-- task затронула repository/application-service round-trip или legacy-read тесты;
-- схема жестко кодирует Dify-specific поля или provider-specific payload.
-
-## Task 4b. Подготовить persistence mapping для retrieved context без migration
-
-**Цель:** подготовить минимальный persistence mapping для retrieved context state/items или limitation без migration и без подключения repository round-trip.
-
-**Зависимости:** Task 3, Task 4a.
-
-**Входит:**
-
-- минимальное расширение persistence entity/configuration для retrieved context данных Stage 1;
-- mapping-level представление:
-  - retrieved context state;
-  - retrieved context items или limitation;
-  - provider/adapter metadata у item, если она нужна для уже согласованной модели;
-  - полнота item: full, excerpt only, metadata only, unavailable/limitation;
-- compile-level проверка mapping/configuration без применения migration.
-
-**Не входит:**
-
-- EF/SQLite migration;
-- repository round-trip;
-- external adapter;
-- Dify/mock adapter;
-- RAG, embeddings, rerank, vector database или retrieval trace;
-- export;
-- UI;
-- реальный внешний вызов;
-- история всех запусков анализа или новая audit-система.
-
-**Ожидаемый diff:**
-
-- изменения persistence entity/configuration только для retrieved context Stage 1;
-- минимальные compile/mapping tests, если такие уже приняты в проекте;
-- без migration files;
-- без изменений Razor Pages, exporters, adapters и MVP-0 документов.
-
-**Проверки:**
-
-- `dotnet build`;
-- `dotnet test`, если затронутые mapping tests уже есть или добавлены минимально;
-- ручная проверка diff на отсутствие migration, repository round-trip, UI/export/adapter кода, Dify-specific schema, RAG, embeddings, rerank и vector database.
-
-**Критерии Done:**
-
-- persistence mapping готов представить retrieved context state/items или limitation Stage 1;
-- mapping поддерживает full, metadata-only, unavailable и partial/limitation сценарии без retrieval trace;
-- migration не добавлена;
-- direct LLM результат не получает synthetic retrieved context item.
-
-**Red flags для review:**
-
-- вместе с mapping добавлена migration или snapshot-изменение схемы;
-- появилась repository/application-service round-trip логика;
-- модель требует Dify-specific JSON или provider-specific raw response как штатное хранение;
-- добавлены RAG, embeddings, rerank, vector database, mock adapter или внешний вызов.
-
-## Task 4c. Добавить EF migration для Stage 1 persistence changes
-
-**Цель:** добавить отдельную обозримую EF/SQLite migration для уже подготовленных Stage 1 persistence mappings metadata и retrieved context без repository/application-service round-trip.
-
-**Зависимости:** Task 4a, Task 4b.
-
-**Входит:**
-
-- отдельная EF/SQLite migration для Stage 1 persistence changes;
-- schema-level представление:
-  - analysis mode;
-  - engine/provider/adapter/model/workflow/profile metadata;
-  - retrieved context state;
-  - warnings;
-  - manual-context-to-external flag;
-  - retrieved context items или limitation;
-- проверка, что migration соответствует mapping из Task 4a и Task 4b;
-- проверка компиляции migration/snapshot.
-
-**Не входит:**
-
 - repository/application-service round-trip;
 - legacy-read tests;
 - UI;
@@ -339,37 +228,93 @@ task review -> implementation -> code review -> commit -> next task
 
 **Ожидаемый diff:**
 
-- новая EF/SQLite migration и связанное snapshot/configuration-изменение только в объеме Stage 1;
-- без repository/service logic;
-- без legacy-read tests;
+- изменения persistence entity/configuration только для analysis metadata Stage 1;
+- новая EF/SQLite migration и связанное snapshot/schema-изменение только для metadata columns;
+- model/migration tests или минимальная schema/build проверка;
 - без изменений Razor Pages, exporters, adapters и MVP-0 документов.
 
 **Проверки:**
 
 - `dotnet build`;
-- `dotnet test`, если migration/schema tests уже есть или добавлены минимально;
-- проверка, что migration не создает таблицы для audit/history/retrieval trace;
-- ручная проверка diff на отсутствие UI/export/adapter кода, Dify-specific schema, RAG, embeddings, rerank и vector database.
+- полный `dotnet test`;
+- targeted model/migration tests, если они выделены отдельно;
+- ручная проверка diff на отсутствие retrieved context item storage, repository/application-service round-trip, legacy-read tests, UI/export/adapter кода, Dify-specific schema, RAG, embeddings, rerank и vector database.
 
 **Критерии Done:**
 
-- migration добавляет только Stage 1 persistence changes для metadata и retrieved context;
-- migration является отдельным обозримым diff после mapping задач;
-- schema не кодирует Dify-specific поля и не добавляет audit/history/retrieval trace;
+- persistence mapping и schema готовы представить analysis metadata Stage 1;
+- mapping не требует retrieved context item storage;
+- migration добавляет только metadata columns Stage 1 и не оставляет модель в состоянии ожидания будущей схемы;
 - существующие MVP-0 mapping/build сценарии не ломаются.
 
 **Red flags для review:**
 
-- migration добавляет историю всех запусков без отдельного решения;
-- migration содержит Dify-specific поля или provider-specific raw response как обязательную штатную модель;
-- вместе с migration появилась repository/application-service round-trip логика или legacy-read тесты;
-- изменение хранения ломает существующие MVP-0 анализы.
+- вместе с metadata mapping добавлено хранение retrieved context items;
+- task затронула repository/application-service round-trip или legacy-read тесты;
+- migration содержит retrieved context item storage, audit/history/retrieval trace или provider-specific raw response как обязательную штатную модель;
+- схема жестко кодирует Dify-specific поля или provider-specific payload.
+
+## Task 4b. Добавить persistence для retrieved context с EF migration
+
+**Цель:** добавить коммитопригодное persistence-представление retrieved context items/limitations вместе с EF/SQLite migration, сохранив repository/application-service round-trip для отдельной Task 5.
+
+**Зависимости:** Task 3, Task 4a.
+
+**Входит:**
+
+- EF/entity configuration для retrieved context items/limitations;
+- EF/SQLite migration и snapshot/schema changes для item storage;
+- schema-level представление:
+  - retrieved context state;
+  - retrieved context items или limitation;
+  - provider/adapter metadata у item, если она нужна для уже согласованной модели;
+  - полнота item: full, excerpt only, metadata only, unavailable/limitation;
+- `dotnet build` и полный `dotnet test`.
+
+**Не входит:**
+
+- repository/application-service round-trip;
+- external adapter;
+- Dify/mock adapter;
+- RAG, embeddings, rerank, vector database или retrieval trace;
+- export;
+- UI;
+- реальный внешний вызов;
+- история всех запусков анализа или новая audit-система.
+
+**Ожидаемый diff:**
+
+- изменения persistence entity/configuration только для retrieved context Stage 1;
+- новая EF/SQLite migration и связанное snapshot/schema-изменение только для item storage/limitations;
+- model/migration tests или минимальная schema/build проверка;
+- без изменений Razor Pages, exporters, adapters и MVP-0 документов.
+
+**Проверки:**
+
+- `dotnet build`;
+- полный `dotnet test`;
+- targeted model/migration tests, если они выделены отдельно;
+- ручная проверка diff на отсутствие repository/application-service round-trip, UI/export/adapter кода, Dify-specific schema, RAG, embeddings, rerank и vector database.
+
+**Критерии Done:**
+
+- persistence mapping и schema готовы представить retrieved context state/items или limitation Stage 1;
+- mapping поддерживает full, metadata-only, unavailable и partial/limitation сценарии без retrieval trace;
+- migration добавляет только item storage/limitations Stage 1 и не оставляет модель в состоянии ожидания будущей схемы;
+- direct LLM результат не получает synthetic retrieved context item.
+
+**Red flags для review:**
+
+- появилась repository/application-service round-trip логика;
+- модель требует Dify-specific JSON или provider-specific raw response как штатное хранение;
+- migration добавляет историю всех запусков, audit-систему или retrieval trace без отдельного решения;
+- добавлены RAG, embeddings, rerank, vector database, mock adapter или внешний вызов.
 
 ## Task 5. Реализовать round-trip чтения и записи Stage 1 данных
 
 **Цель:** обеспечить сохранение и чтение результата с mode, metadata и retrieved context state/items поверх подготовленной схемы, включая legacy compatibility.
 
-**Зависимости:** Task 4c.
+**Зависимости:** Task 4b.
 
 **Входит:**
 
@@ -386,7 +331,7 @@ task review -> implementation -> code review -> commit -> next task
 
 **Не входит:**
 
-- новая migration или изменение схемы сверх Task 4c;
+- новая migration или изменение схемы сверх Task 4a и Task 4b;
 - изменение поведения `DirectLlmAnalysisEngine`;
 - тестовый external adapter или production external adapter;
 - export;
@@ -525,7 +470,7 @@ task review -> implementation -> code review -> commit -> next task
 
 Stage 1 считается готовым к переходу на следующий этап только если:
 
-- все 9 tasks реализованы и прошли отдельные review: Task 1, Task 2, Task 3, Task 4a, Task 4b, Task 4c, Task 5, Task 6 и Task 7;
+- все 8 tasks реализованы и прошли отдельные review: Task 1, Task 2, Task 3, Task 4a, Task 4b, Task 5, Task 6 и Task 7;
 - `dotnet build` и `dotnet test` проходят без сети, Dify, user secrets и внешних ключей;
 - можно сохранить и прочитать direct LLM результат, legacy MVP-0 результат и external AI/RAG-shaped результат;
 - direct LLM не получает искусственный retrieved context;
