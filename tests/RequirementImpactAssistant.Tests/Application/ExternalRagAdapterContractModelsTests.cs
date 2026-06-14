@@ -8,6 +8,44 @@ namespace RequirementImpactAssistant.Tests.Application;
 
 public sealed class ExternalRagAdapterContractModelsTests
 {
+    [Fact]
+    public void AdapterContract_UsesOnlyNeutralRequestResponseModels()
+    {
+        var method = Assert.Single(typeof(IExternalRagAdapter).GetMethods());
+
+        Assert.Equal(nameof(IExternalRagAdapter.AnalyzeAsync), method.Name);
+        Assert.Equal(typeof(Task<ExternalRagAdapterResponse>), method.ReturnType);
+
+        var parameters = method.GetParameters();
+        Assert.Collection(
+            parameters,
+            parameter => Assert.Equal(typeof(ExternalRagAdapterRequest), parameter.ParameterType),
+            parameter => Assert.Equal(typeof(CancellationToken), parameter.ParameterType));
+    }
+
+    [Fact]
+    public void AdapterContract_DoesNotDependOnProviderUiOrExportTypes()
+    {
+        var forbiddenNamespaces = new[]
+        {
+            "RequirementImpactAssistant.Web.Application.Analysis.Llm",
+            "RequirementImpactAssistant.Web.Application.Export",
+            "RequirementImpactAssistant.Web.Pages",
+            "Microsoft.AspNetCore.Mvc.RazorPages",
+            "System.Net.Http"
+        };
+
+        var violations = GetReferencedTypes(typeof(IExternalRagAdapter))
+            .Where(type => forbiddenNamespaces.Any(
+                forbiddenNamespace => type.Namespace == forbiddenNamespace
+                    || type.Namespace?.StartsWith(forbiddenNamespace + ".", StringComparison.Ordinal) == true))
+            .Select(type => type.FullName)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(violations);
+    }
+
     [Theory]
     [InlineData(ExternalRagAdapterResponseStatus.Completed, "Completed")]
     [InlineData(ExternalRagAdapterResponseStatus.CompletedWithWarnings, "CompletedWithWarnings")]
@@ -184,4 +222,45 @@ public sealed class ExternalRagAdapterContractModelsTests
             {
                 ["diagnosticLevel"] = "summary"
             });
+
+    private static IEnumerable<Type> GetReferencedTypes(Type type)
+    {
+        var method = Assert.Single(type.GetMethods());
+
+        foreach (var referencedType in ExpandType(method.ReturnType))
+        {
+            yield return referencedType;
+        }
+
+        foreach (var parameter in method.GetParameters())
+        {
+            foreach (var referencedType in ExpandType(parameter.ParameterType))
+            {
+                yield return referencedType;
+            }
+        }
+    }
+
+    private static IEnumerable<Type> ExpandType(Type? type)
+    {
+        if (type is null)
+        {
+            yield break;
+        }
+
+        yield return type;
+
+        if (!type.IsGenericType)
+        {
+            yield break;
+        }
+
+        foreach (var genericArgument in type.GetGenericArguments())
+        {
+            foreach (var referencedType in ExpandType(genericArgument))
+            {
+                yield return referencedType;
+            }
+        }
+    }
 }
