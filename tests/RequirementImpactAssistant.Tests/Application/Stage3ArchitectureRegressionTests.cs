@@ -91,7 +91,7 @@ public sealed class Stage3ArchitectureRegressionTests
     }
 
     [Fact]
-    public void ProductionCode_DoesNotContainExternalRagAdapterImplementation()
+    public void ProductionCode_ContainsOnlyMockExternalRagAdapterImplementation()
     {
         var implementations = WebAssembly
             .GetTypes()
@@ -101,7 +101,7 @@ public sealed class Stage3ArchitectureRegressionTests
             .Order(StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Empty(implementations);
+        Assert.Equal([typeof(MockExternalRagAdapter).FullName], implementations);
     }
 
     [Fact]
@@ -136,7 +136,6 @@ public sealed class Stage3ArchitectureRegressionTests
             "Endpoint",
             "UserSecrets",
             "Secret",
-            "MockExternalRagAdapter",
             "FakeExternalRagAdapter",
             "Embedding",
             "Embeddings",
