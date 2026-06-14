@@ -1,4 +1,3 @@
-using System.ComponentModel.DataAnnotations.Schema;
 using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
 
@@ -22,7 +21,6 @@ public sealed class AiAnalysisResult
 
     public string ModelName { get; set; } = string.Empty;
 
-    [NotMapped]
     public AiAnalysisResultMetadata Metadata
     {
         get => metadata ??= CreateDefaultMetadata();

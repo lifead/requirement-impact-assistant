@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using RequirementImpactAssistant.Web.Domain;
+using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
 using System.Text.Json;
 
@@ -20,6 +21,19 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             : JsonSerializer.Deserialize<List<Guid>>(value, JsonSerializerOptions) ?? new List<Guid>());
 
     private static readonly ValueComparer<List<Guid>> GuidListValueComparer = new(
+        (left, right) => left != null && right != null && left.SequenceEqual(right),
+        value => value.Aggregate(0, (hash, item) => HashCode.Combine(hash, item.GetHashCode())),
+        value => value.ToList());
+
+    private static readonly ValueConverter<List<string>, string?> StringListJsonConverter = new(
+        value => value.Count == 0
+            ? null
+            : JsonSerializer.Serialize(value, JsonSerializerOptions),
+        value => string.IsNullOrWhiteSpace(value)
+            ? new List<string>()
+            : JsonSerializer.Deserialize<List<string>>(value, JsonSerializerOptions) ?? new List<string>());
+
+    private static readonly ValueComparer<List<string>> StringListValueComparer = new(
         (left, right) => left != null && right != null && left.SequenceEqual(right),
         value => value.Aggregate(0, (hash, item) => HashCode.Combine(hash, item.GetHashCode())),
         value => value.ToList());
@@ -173,7 +187,60 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
         entity.Property(result => result.ErrorMessage)
             .IsRequired();
 
+        entity.OwnsOne(result => result.Metadata, ConfigureAiAnalysisResultMetadata);
+
+        entity.Navigation(result => result.Metadata)
+            .IsRequired();
+
         entity.OwnsOne(result => result.ImpactMap, ConfigureImpactMap);
+    }
+
+    private static void ConfigureAiAnalysisResultMetadata(
+        OwnedNavigationBuilder<AiAnalysisResult, AiAnalysisResultMetadata> metadata)
+    {
+        metadata.Property(item => item.AnalysisMode)
+            .HasColumnName("AnalysisMode")
+            .HasConversion<string>()
+            .HasMaxLength(50)
+            .HasDefaultValue(AnalysisMode.DirectLlm)
+            .IsRequired();
+
+        metadata.Property(item => item.EngineName)
+            .HasColumnName("MetadataEngineName")
+            .HasMaxLength(200)
+            .IsRequired(false);
+
+        metadata.Property(item => item.ProviderName)
+            .HasColumnName("MetadataProviderName")
+            .HasMaxLength(200);
+
+        metadata.Property(item => item.AdapterName)
+            .HasColumnName("MetadataAdapterName")
+            .HasMaxLength(200);
+
+        metadata.Property(item => item.ModelWorkflowProfileName)
+            .HasColumnName("MetadataModelWorkflowProfileName")
+            .HasMaxLength(200);
+
+        metadata.Property(item => item.RetrievedContextState)
+            .HasColumnName("RetrievedContextState")
+            .HasConversion<string>()
+            .HasMaxLength(50)
+            .HasDefaultValue(RetrievedContextState.Unavailable)
+            .IsRequired();
+
+        metadata.Property(item => item.ManualContextForwardedToExternalAiOrRag)
+            .HasColumnName("ManualContextForwardedToExternalAiOrRag")
+            .HasDefaultValue(false)
+            .IsRequired();
+
+        metadata.Property(item => item.Warnings)
+            .HasColumnName("Warnings")
+            .HasConversion(StringListJsonConverter)
+            .IsRequired(false)
+            .Metadata.SetValueComparer(StringListValueComparer);
+
+        metadata.Ignore(item => item.RetrievedContextItems);
     }
 
     private static void ConfigureImpactMap(
