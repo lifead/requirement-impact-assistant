@@ -1,30 +1,29 @@
 using System.Reflection;
+using Microsoft.AspNetCore.Mvc.RazorPages;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.External;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
-using RequirementImpactAssistant.Web.Application.Export;
 
 namespace RequirementImpactAssistant.Tests.Application;
 
-public sealed class ExportArchitectureTests
+public sealed class Stage3ArchitectureRegressionTests
 {
-    private static readonly Type[] ExportTypes = typeof(AnalysisMarkdownExportService).Assembly
-        .GetTypes()
-        .Where(type => type.Namespace == "RequirementImpactAssistant.Web.Application.Export")
-        .ToArray();
+    private static readonly Assembly WebAssembly = typeof(IAiAnalysisEngine).Assembly;
 
     [Fact]
-    public void ExportTypes_DoNotDependOnAnalysisEnginesLlmProvidersOrNetworkClients()
+    public void PageModels_DoNotDependOnExternalAdapterProviderSpecificTypesOrNetworkClients()
     {
+        var pageModelTypes = WebAssembly
+            .GetTypes()
+            .Where(type => type.IsAssignableTo(typeof(PageModel)))
+            .ToArray();
+
         var forbiddenTypes = new[]
         {
-            typeof(IAiAnalysisEngine),
-            typeof(IAiAnalysisEngineSelector),
             typeof(IExternalRagAdapter),
             typeof(ExternalRagAnalysisEngine),
+            typeof(IAiAnalysisEngineSelector),
             typeof(ILlmProvider),
-            typeof(DirectLlmAnalysisEngine),
-            typeof(DemoLlmProvider),
             typeof(DeepSeekLlmProvider),
             typeof(HttpClient),
             typeof(HttpMessageHandler),
@@ -32,10 +31,26 @@ public sealed class ExportArchitectureTests
             typeof(HttpResponseMessage)
         };
 
-        var violations = ExportTypes
+        var violations = pageModelTypes
             .SelectMany(type => GetReferencedTypes(type)
-                .Where(referencedType => forbiddenTypes.Any(forbiddenType => forbiddenType.IsAssignableFrom(referencedType)))
+                .Where(IsExternalAdapterModelOrForbiddenType)
                 .Select(referencedType => $"{type.FullName} -> {referencedType.FullName}"))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(violations);
+
+        bool IsExternalAdapterModelOrForbiddenType(Type referencedType) =>
+            IsExternalAdapterModel(referencedType) ||
+            forbiddenTypes.Any(forbiddenType => forbiddenType.IsAssignableFrom(referencedType));
+    }
+
+    [Fact]
+    public void DirectLlmAnalysisEngine_DoesNotDependOnExternalAdapterBoundary()
+    {
+        var violations = GetReferencedTypes(typeof(DirectLlmAnalysisEngine))
+            .Where(IsExternalAdapterModel)
+            .Select(referencedType => $"{typeof(DirectLlmAnalysisEngine).FullName} -> {referencedType.FullName}")
             .Order(StringComparer.Ordinal)
             .ToArray();
 
@@ -43,52 +58,109 @@ public sealed class ExportArchitectureTests
     }
 
     [Fact]
-    public void ExportSourceFiles_DoNotReferenceProviderAdapterNetworkOrRetrievalImplementations()
+    public void PageModelsAndDirectLlmSource_DoNotReferenceExternalAdapterOrNetworkBoundaryTokens()
     {
-        var exportDirectory = Path.Combine(
-            FindRepositoryRoot(),
-            "src",
-            "RequirementImpactAssistant.Web",
-            "Application",
-            "Export");
+        var repositoryRoot = FindRepositoryRoot();
+        var webProjectDirectory = Path.Combine(repositoryRoot, "src", "RequirementImpactAssistant.Web");
+        var pagesDirectory = Path.Combine(webProjectDirectory, "Pages");
+
+        var files = Directory.EnumerateFiles(pagesDirectory, "*.cs", SearchOption.AllDirectories)
+            .Append(Path.Combine(webProjectDirectory, "Application", "Analysis", "DirectLlmAnalysisEngine.cs"))
+            .ToArray();
 
         var forbiddenTokens = new[]
         {
-            "IAiAnalysisEngine",
-            "IAnalysisExecutionService",
-            "AnalysisExecutionService",
-            "IAiAnalysisEngineSelector",
-            "AiAnalysisEngineSelector",
+            "RequirementImpactAssistant.Web.Application.Analysis.External",
             "IExternalRagAdapter",
             "ExternalRagAdapter",
             "ExternalRagAnalysisEngine",
-            "ILlmProvider",
-            "DirectLlmAnalysisEngine",
-            "DemoLlmProvider",
-            "DeepSeek",
+            "HttpClient",
+            "HttpMessageHandler",
+            "HttpRequestMessage",
+            "HttpResponseMessage"
+        };
+
+        var violations = files
+            .SelectMany(file => forbiddenTokens
+                .Where(token => File.ReadAllText(file).Contains(token, StringComparison.Ordinal))
+                .Select(token => $"{Path.GetRelativePath(repositoryRoot, file)} contains {token}"))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void ProductionCode_DoesNotContainExternalRagAdapterImplementation()
+    {
+        var implementations = WebAssembly
+            .GetTypes()
+            .Where(type => type.IsClass && !type.IsAbstract)
+            .Where(type => type.IsAssignableTo(typeof(IExternalRagAdapter)))
+            .Select(type => type.FullName)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(implementations);
+    }
+
+    [Fact]
+    public void Stage3BoundarySourceFiles_DoNotIntroduceProviderSpecificNetworkSecretOrRagImplementationTokens()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var analysisDirectory = Path.Combine(
+            repositoryRoot,
+            "src",
+            "RequirementImpactAssistant.Web",
+            "Application",
+            "Analysis");
+        var externalDirectory = Path.Combine(analysisDirectory, "External");
+
+        var files = Directory.EnumerateFiles(externalDirectory, "*.cs")
+            .Concat(
+            [
+                Path.Combine(analysisDirectory, "ExternalRagAnalysisEngine.cs"),
+                Path.Combine(analysisDirectory, "AiAnalysisEngineSelector.cs"),
+                Path.Combine(analysisDirectory, "IAiAnalysisEngineSelector.cs")
+            ])
+            .ToArray();
+
+        var forbiddenTokens = new[]
+        {
             "Dify",
             "HttpClient",
             "HttpMessageHandler",
             "HttpRequestMessage",
             "HttpResponseMessage",
+            "ApiKey",
+            "Endpoint",
+            "UserSecrets",
+            "Secret",
+            "MockExternalRagAdapter",
+            "FakeExternalRagAdapter",
             "Embedding",
             "Embeddings",
             "Rerank",
             "VectorDb",
             "VectorDatabase",
             "Qdrant",
-            "Pinecone"
+            "Pinecone",
+            "Chroma",
+            "Milvus"
         };
 
-        var violations = Directory.EnumerateFiles(exportDirectory, "*.cs")
+        var violations = files
             .SelectMany(file => forbiddenTokens
                 .Where(token => File.ReadAllText(file).Contains(token, StringComparison.Ordinal))
-                .Select(token => $"{Path.GetFileName(file)} contains {token}"))
+                .Select(token => $"{Path.GetRelativePath(repositoryRoot, file)} contains {token}"))
             .Order(StringComparer.Ordinal)
             .ToArray();
 
         Assert.Empty(violations);
     }
+
+    private static bool IsExternalAdapterModel(Type type) =>
+        type.Namespace == "RequirementImpactAssistant.Web.Application.Analysis.External";
 
     private static IEnumerable<Type> GetReferencedTypes(Type type)
     {
