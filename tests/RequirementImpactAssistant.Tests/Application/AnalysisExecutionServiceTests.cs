@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -445,6 +446,204 @@ public sealed class AnalysisExecutionServiceTests
                 Assert.Equal(nameof(ExternalRagAnalysisEngine), savedResult.EngineName);
                 Assert.Equal("LocalMockKnowledgeSource", savedResult.ProviderName);
                 Assert.Equal(nameof(MockExternalRagAdapter), savedResult.Metadata.AdapterName);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Theory]
+    [InlineData(null, AiAnalysisResultStatus.Completed, AnalysisStatus.NeedsExpertEvaluation, RetrievedContextState.Available, 2, false)]
+    [InlineData("metadata-only", AiAnalysisResultStatus.CompletedWithWarnings, AnalysisStatus.NeedsExpertEvaluation, RetrievedContextState.MetadataOnly, 1, false)]
+    [InlineData("unavailable", AiAnalysisResultStatus.CompletedWithWarnings, AnalysisStatus.NeedsExpertEvaluation, RetrievedContextState.Unavailable, 0, false)]
+    [InlineData("partial", AiAnalysisResultStatus.CompletedWithWarnings, AnalysisStatus.NeedsExpertEvaluation, RetrievedContextState.Partial, 1, false)]
+    [InlineData("failed", AiAnalysisResultStatus.Failed, AnalysisStatus.LlmAnalysisFailed, RetrievedContextState.Unavailable, 0, true)]
+    public async Task RunAsync_ExternalRagModeThroughMockAdapterPersistsScenarioMetadataAndRetrievedContext(
+        string? mockProfileName,
+        AiAnalysisResultStatus expectedResultStatus,
+        AnalysisStatus expectedAnalysisStatus,
+        RetrievedContextState expectedRetrievedContextState,
+        int expectedRetrievedContextItemCount,
+        bool expectedFailedResult)
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis("Gateway migration");
+            analysis.ContextFragments.Add(CreateContextFragment(analysis.Id));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            var directEngine = new StubAiAnalysisEngine(new AiAnalysisResponse(
+                AiAnalysisResponseStatus.Succeeded,
+                CreateImpactMap(),
+                "direct raw response",
+                [],
+                AnalysisBoundaryNotice.Default));
+            var adapter = new ProfiledMockExternalRagAdapter(mockProfileName);
+            var externalEngine = new ExternalRagAnalysisEngine(adapter);
+            var selector = new ModeAwareAiAnalysisEngineSelector(directEngine, externalEngine);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(dbContext, new CapturingAssembler(), selector);
+
+                var outcome = await service.RunAsync(analysis.Id, AnalysisMode.ExternalRag);
+
+                Assert.True(outcome.Succeeded);
+                Assert.Equal(expectedResultStatus, outcome.ResultStatus);
+            }
+
+            Assert.Equal([AnalysisMode.ExternalRag], selector.SelectedModes);
+            Assert.Equal(0, directEngine.CallCount);
+            Assert.Equal(1, adapter.CallCount);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var saved = await dbContext.Analyses
+                    .AsSplitQuery()
+                    .Include(candidate => candidate.AiAnalysisResult)
+                    .ThenInclude(result => result!.Metadata.RetrievedContextItems)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(expectedAnalysisStatus, saved.Status);
+                Assert.NotNull(saved.AiAnalysisResult);
+                Assert.Equal(expectedResultStatus, saved.AiAnalysisResult.Status);
+                Assert.Equal(nameof(ExternalRagAnalysisEngine), saved.AiAnalysisResult.EngineName);
+                Assert.Equal("LocalMockKnowledgeSource", saved.AiAnalysisResult.ProviderName);
+                Assert.Equal(CreateMockModelWorkflowProfileName(mockProfileName), saved.AiAnalysisResult.ModelName);
+                Assert.Equal(expectedFailedResult, saved.AiAnalysisResult.ImpactMap is null);
+
+                var metadata = saved.AiAnalysisResult.Metadata;
+                Assert.Equal(AnalysisMode.ExternalRag, metadata.AnalysisMode);
+                Assert.Equal(nameof(ExternalRagAnalysisEngine), metadata.EngineName);
+                Assert.Equal("LocalMockKnowledgeSource", metadata.ProviderName);
+                Assert.Equal(nameof(MockExternalRagAdapter), metadata.AdapterName);
+                Assert.Equal(CreateMockModelWorkflowProfileName(mockProfileName), metadata.ModelWorkflowProfileName);
+                Assert.Equal(expectedRetrievedContextState, metadata.RetrievedContextState);
+                Assert.True(metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Equal(expectedRetrievedContextItemCount, metadata.RetrievedContextItems.Count);
+
+                using var document = JsonDocument.Parse(saved.AiAnalysisResult.RawResponse);
+                Assert.Equal(
+                    CreateMockProfileName(mockProfileName),
+                    document.RootElement.GetProperty("profile").GetString());
+                Assert.Equal(
+                    expectedRetrievedContextState.ToString(),
+                    document.RootElement.GetProperty("retrievedContextState").GetString());
+                Assert.Equal(
+                    expectedRetrievedContextItemCount,
+                    document.RootElement.GetProperty("retrievedContextItemCount").GetInt32());
+
+                AssertMockScenarioPersistence(
+                    metadata,
+                    mockProfileName,
+                    expectedRetrievedContextItemCount,
+                    expectedFailedResult,
+                    saved.AiAnalysisResult.ErrorMessage);
+            }
+
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM RetrievedContextItems;";
+
+                var retrievedContextItemCount = (long)(await command.ExecuteScalarAsync() ?? 0L);
+                Assert.Equal(expectedRetrievedContextItemCount, retrievedContextItemCount);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_DefaultDirectLlmModeDoesNotUseMockExternalScenarioOrPersistRetrievedContext()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis("Gateway migration");
+            analysis.ContextFragments.Add(CreateContextFragment(analysis.Id));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            var directEngine = new StubAiAnalysisEngine(new AiAnalysisResponse(
+                AiAnalysisResponseStatus.Succeeded,
+                CreateImpactMap(),
+                "direct raw response",
+                [],
+                AnalysisBoundaryNotice.Default));
+            var adapter = new ProfiledMockExternalRagAdapter("failed");
+            var externalEngine = new ExternalRagAnalysisEngine(adapter);
+            var selector = new ModeAwareAiAnalysisEngineSelector(directEngine, externalEngine);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(dbContext, new CapturingAssembler(), selector);
+
+                var outcome = await service.RunAsync(analysis.Id);
+
+                Assert.True(outcome.Succeeded);
+                Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
+            }
+
+            Assert.Equal([AnalysisMode.DirectLlm], selector.SelectedModes);
+            Assert.Equal(1, directEngine.CallCount);
+            Assert.Equal(0, adapter.CallCount);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var savedResult = await dbContext.AiAnalysisResults
+                    .AsSplitQuery()
+                    .Include(candidate => candidate.Metadata.RetrievedContextItems)
+                    .SingleAsync(candidate => candidate.AnalysisId == analysis.Id);
+
+                Assert.Equal(AiAnalysisResultStatus.Completed, savedResult.Status);
+                Assert.Equal(nameof(StubAiAnalysisEngine), savedResult.EngineName);
+                Assert.Equal("Demo", savedResult.ProviderName);
+                Assert.Equal("demo-deterministic", savedResult.ModelName);
+                Assert.Equal("direct raw response", savedResult.RawResponse);
+                Assert.NotNull(savedResult.ImpactMap);
+
+                var metadata = savedResult.Metadata;
+                Assert.Equal(AnalysisMode.DirectLlm, metadata.AnalysisMode);
+                Assert.Equal(nameof(StubAiAnalysisEngine), metadata.EngineName);
+                Assert.Null(metadata.AdapterName);
+                Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
+                Assert.False(metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Empty(metadata.Warnings);
+                Assert.Empty(metadata.RetrievedContextItems);
+            }
+
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM RetrievedContextItems;";
+
+                var retrievedContextItemCount = (long)(await command.ExecuteScalarAsync() ?? 0L);
+                Assert.Equal(0L, retrievedContextItemCount);
             }
         }
         finally
@@ -1008,6 +1207,93 @@ public sealed class AnalysisExecutionServiceTests
                 Provider = LlmProviderNames.Demo
             }));
 
+    private static string CreateMockProfileName(string? mockProfileName) =>
+        string.IsNullOrWhiteSpace(mockProfileName)
+            ? "happy-path"
+            : mockProfileName;
+
+    private static string CreateMockModelWorkflowProfileName(string? mockProfileName) =>
+        $"local-demo-model / mock-impact-analysis / {CreateMockProfileName(mockProfileName)}";
+
+    private static void AssertMockScenarioPersistence(
+        AiAnalysisResultMetadata metadata,
+        string? mockProfileName,
+        int expectedRetrievedContextItemCount,
+        bool expectedFailedResult,
+        string errorMessage)
+    {
+        Assert.Equal(expectedRetrievedContextItemCount, metadata.RetrievedContextItems.Count);
+
+        switch (CreateMockProfileName(mockProfileName))
+        {
+            case "happy-path":
+                Assert.Empty(metadata.Warnings);
+                Assert.Collection(
+                    metadata.RetrievedContextItems,
+                    item =>
+                    {
+                        Assert.Equal("Local demo requirement catalogue", item.SourceTitle);
+                        Assert.Equal("local-demo-REQ-001", item.ExternalReference);
+                        Assert.NotNull(item.Text);
+                        Assert.Equal("Controlled change to an integration boundary requires expert review.", item.Excerpt);
+                        Assert.Equal(RetrievedContextItemCompleteness.FullText, item.Completeness);
+                        Assert.Equal(nameof(MockExternalRagAdapter), item.AdapterName);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("Local demo decision log", item.SourceTitle);
+                        Assert.Equal("local-demo-ADR-002", item.ExternalReference);
+                        Assert.NotNull(item.Text);
+                        Assert.Equal(RetrievedContextItemCompleteness.FullText, item.Completeness);
+                        Assert.Equal(nameof(MockExternalRagAdapter), item.AdapterName);
+                    });
+                Assert.Empty(errorMessage);
+                break;
+
+            case "metadata-only":
+                Assert.Equal(["Retrieved context contains source metadata only; source text was not returned."], metadata.Warnings);
+                var metadataOnlyItem = Assert.Single(metadata.RetrievedContextItems);
+                Assert.Equal("Local demo integration inventory", metadataOnlyItem.SourceTitle);
+                Assert.Equal("local-demo-INV-003", metadataOnlyItem.ExternalReference);
+                Assert.Null(metadataOnlyItem.Text);
+                Assert.Null(metadataOnlyItem.Excerpt);
+                Assert.Equal(RetrievedContextItemCompleteness.MetadataOnly, metadataOnlyItem.Completeness);
+                Assert.Equal("Only source metadata is available in this mock scenario.", metadataOnlyItem.WarningOrLimitationNote);
+                Assert.Equal(nameof(MockExternalRagAdapter), metadataOnlyItem.AdapterName);
+                Assert.False(expectedFailedResult);
+                break;
+
+            case "unavailable":
+                Assert.Equal(
+                    ["Structured impact analysis is available, but retrieved context is unavailable in this mock scenario."],
+                    metadata.Warnings);
+                Assert.Empty(metadata.RetrievedContextItems);
+                Assert.False(expectedFailedResult);
+                break;
+
+            case "partial":
+                Assert.Equal(["Retrieved context is partial; full source text was not returned."], metadata.Warnings);
+                var partialItem = Assert.Single(metadata.RetrievedContextItems);
+                Assert.Equal("Local demo requirement excerpt", partialItem.SourceTitle);
+                Assert.Equal("local-demo-REQ-004", partialItem.ExternalReference);
+                Assert.Null(partialItem.Text);
+                Assert.Equal("The requested change may affect an integration boundary.", partialItem.Excerpt);
+                Assert.Equal(RetrievedContextItemCompleteness.ExcerptOnly, partialItem.Completeness);
+                Assert.Equal("Full source text is not available in this mock scenario.", partialItem.WarningOrLimitationNote);
+                Assert.Equal(nameof(MockExternalRagAdapter), partialItem.AdapterName);
+                Assert.False(expectedFailedResult);
+                break;
+
+            case "failed":
+                Assert.Equal(["Local mock external analysis returned a controlled failed response."], metadata.Warnings);
+                Assert.Empty(metadata.RetrievedContextItems);
+                Assert.Contains("mock_external_failure", errorMessage);
+                Assert.Contains("Local mock external analysis did not produce an impact map.", errorMessage);
+                Assert.True(expectedFailedResult);
+                break;
+        }
+    }
+
     private static ImpactMap CreateImpactMap()
     {
         var impactMap = new ImpactMap
@@ -1126,6 +1412,33 @@ public sealed class AnalysisExecutionServiceTests
         if (File.Exists(databasePath))
         {
             File.Delete(databasePath);
+        }
+    }
+
+    private sealed class ProfiledMockExternalRagAdapter(string? profileName) : IExternalRagAdapter
+    {
+        private readonly MockExternalRagAdapter inner = new();
+
+        public int CallCount { get; private set; }
+
+        public ExternalRagAdapterRequest? LastRequest { get; private set; }
+
+        public Task<ExternalRagAdapterResponse> AnalyzeAsync(
+            ExternalRagAdapterRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+
+            var profiledRequest = request with
+            {
+                ExecutionMetadata = request.ExecutionMetadata with
+                {
+                    RequestedProfileName = profileName
+                }
+            };
+            LastRequest = profiledRequest;
+
+            return inner.AnalyzeAsync(profiledRequest, cancellationToken);
         }
     }
 
