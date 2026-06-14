@@ -500,6 +500,154 @@ public sealed class AnalysisJsonExportServiceTests
     }
 
     [Fact]
+    public async Task ExportAsync_ExportsSavedExternalRetrievedContextItemsFromSqlite()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysisGraph();
+            analysis.AiAnalysisResult!.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                ProviderName = "neutral-provider",
+                AdapterName = "neutral-adapter",
+                ModelWorkflowProfileName = "impact-workflow-profile",
+                RetrievedContextState = RetrievedContextState.MetadataOnly,
+                ManualContextForwardedToExternalAiOrRag = true,
+                Warnings = ["Only retrieved context metadata was saved."],
+                RetrievedContextItems =
+                [
+                    new RetrievedContextItem
+                    {
+                        SourceTitle = "Saved external requirement",
+                        SourceId = "REQ-EXT-5",
+                        ExternalReference = "external-record-5",
+                        FragmentId = "fragment-5",
+                        UrlOrReference = "kb://external/5",
+                        Rank = 3,
+                        Score = 0.73,
+                        ProviderName = "neutral-provider",
+                        AdapterName = "neutral-adapter",
+                        Completeness = RetrievedContextItemCompleteness.MetadataOnly,
+                        WarningOrLimitationNote = "Full text was not saved."
+                    }
+                ]
+            };
+
+            await SaveAnalysisAsync(options, analysis);
+
+            await using var dbContext = new ApplicationDbContext(options);
+            var service = new AnalysisJsonExportService(dbContext);
+
+            var result = await service.ExportAsync(analysis.Id, DateTimeOffset.UtcNow);
+
+            Assert.Equal(AnalysisJsonExportResultKind.Exported, result.Kind);
+
+            using var document = JsonDocument.Parse(result.Json);
+            var aiAnalysisResult = document.RootElement.GetProperty("aiAnalysisResult");
+            var retrievedContext = aiAnalysisResult.GetProperty("retrievedContext");
+
+            Assert.Equal("ExternalRag", aiAnalysisResult.GetProperty("analysisMode").GetString());
+            Assert.Equal(
+                "external-analysis-engine",
+                aiAnalysisResult.GetProperty("analysisEngine").GetProperty("name").GetString());
+            Assert.Equal(
+                "neutral-provider",
+                aiAnalysisResult.GetProperty("provider").GetProperty("name").GetString());
+            Assert.Equal(
+                "neutral-adapter",
+                aiAnalysisResult.GetProperty("adapter").GetProperty("name").GetString());
+            Assert.Equal(
+                "impact-workflow-profile",
+                aiAnalysisResult.GetProperty("modelWorkflowProfile").GetProperty("name").GetString());
+            Assert.True(
+                aiAnalysisResult.GetProperty("manualContextUsage").GetProperty("forwardedToExternalAiOrRag").GetBoolean());
+            Assert.Equal("MetadataOnly", aiAnalysisResult.GetProperty("retrievedContextState").GetString());
+            Assert.Equal(
+                "Only retrieved context metadata was saved for this analysis result.",
+                Assert.Single(aiAnalysisResult.GetProperty("retrievedContextLimitations").EnumerateArray()).GetString());
+            Assert.Equal(
+                "Only retrieved context metadata was saved.",
+                Assert.Single(aiAnalysisResult.GetProperty("warnings").EnumerateArray()).GetString());
+            Assert.Equal("MetadataOnly", retrievedContext.GetProperty("state").GetString());
+            Assert.Equal(
+                "Only retrieved context metadata was saved for this analysis result.",
+                Assert.Single(retrievedContext.GetProperty("limitations").EnumerateArray()).GetString());
+            Assert.Equal(
+                "Only retrieved context metadata was saved.",
+                Assert.Single(retrievedContext.GetProperty("warnings").EnumerateArray()).GetString());
+
+            var item = Assert.Single(retrievedContext.GetProperty("items").EnumerateArray());
+            Assert.Equal("Saved external requirement", item.GetProperty("sourceTitle").GetString());
+            Assert.Equal("REQ-EXT-5", item.GetProperty("sourceId").GetString());
+            Assert.Equal("external-record-5", item.GetProperty("externalReference").GetString());
+            Assert.Equal("fragment-5", item.GetProperty("fragmentId").GetString());
+            Assert.Equal(JsonValueKind.Null, item.GetProperty("text").ValueKind);
+            Assert.Equal(JsonValueKind.Null, item.GetProperty("excerpt").ValueKind);
+            Assert.Equal("kb://external/5", item.GetProperty("urlOrReference").GetString());
+            Assert.Equal(3, item.GetProperty("rank").GetInt32());
+            Assert.Equal(0.73, item.GetProperty("score").GetDouble());
+            Assert.Equal("neutral-provider", item.GetProperty("provider").GetString());
+            Assert.Equal("neutral-adapter", item.GetProperty("adapter").GetString());
+            Assert.Equal("MetadataOnly", item.GetProperty("completeness").GetString());
+            Assert.Equal("Full text was not saved.", item.GetProperty("warningOrLimitationNote").GetString());
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExportAsync_ExportsSavedLegacyMvp0ResultWithDirectLlmFallbacks()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysisGraph();
+
+            await SaveAnalysisAsync(options, analysis);
+
+            await using var dbContext = new ApplicationDbContext(options);
+            var service = new AnalysisJsonExportService(dbContext);
+
+            var result = await service.ExportAsync(analysis.Id, DateTimeOffset.UtcNow);
+
+            Assert.Equal(AnalysisJsonExportResultKind.Exported, result.Kind);
+
+            using var document = JsonDocument.Parse(result.Json);
+            var aiAnalysisResult = document.RootElement.GetProperty("aiAnalysisResult");
+            var retrievedContext = aiAnalysisResult.GetProperty("retrievedContext");
+
+            Assert.Equal("DirectLlm", aiAnalysisResult.GetProperty("analysisMode").GetString());
+            Assert.Equal(
+                "demo-engine",
+                aiAnalysisResult.GetProperty("analysisEngine").GetProperty("name").GetString());
+            Assert.Equal(
+                "demo-provider",
+                aiAnalysisResult.GetProperty("provider").GetProperty("name").GetString());
+            Assert.Equal(
+                "demo-model",
+                aiAnalysisResult.GetProperty("modelWorkflowProfile").GetProperty("name").GetString());
+            Assert.False(
+                aiAnalysisResult.GetProperty("manualContextUsage").GetProperty("forwardedToExternalAiOrRag").GetBoolean());
+            Assert.Equal("Unavailable", aiAnalysisResult.GetProperty("retrievedContextState").GetString());
+            Assert.Empty(aiAnalysisResult.GetProperty("warnings").EnumerateArray());
+            Assert.Equal("Unavailable", retrievedContext.GetProperty("state").GetString());
+            Assert.Empty(retrievedContext.GetProperty("items").EnumerateArray());
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task ExportAsync_IsUnavailableWithoutExpertConclusion()
     {
         var databasePath = CreateDatabasePath();

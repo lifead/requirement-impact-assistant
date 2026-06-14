@@ -348,6 +348,91 @@ public sealed class AnalysisMarkdownExportServiceTests
     }
 
     [Fact]
+    public async Task ExportAsync_ExportsSavedExternalRetrievedContextItemsFromSqlite()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysisGraph();
+            analysis.AiAnalysisResult!.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                ProviderName = "neutral-provider",
+                AdapterName = "neutral-adapter",
+                ModelWorkflowProfileName = "impact-workflow-profile",
+                RetrievedContextState = RetrievedContextState.MetadataOnly,
+                ManualContextForwardedToExternalAiOrRag = true,
+                Warnings = ["Only retrieved context metadata was saved."],
+                RetrievedContextItems =
+                [
+                    new RetrievedContextItem
+                    {
+                        SourceTitle = "Saved external requirement",
+                        SourceId = "REQ-EXT-5",
+                        ExternalReference = "external-record-5",
+                        FragmentId = "fragment-5",
+                        UrlOrReference = "kb://external/5",
+                        Rank = 3,
+                        Score = 0.73,
+                        ProviderName = "neutral-provider",
+                        AdapterName = "neutral-adapter",
+                        Completeness = RetrievedContextItemCompleteness.MetadataOnly,
+                        WarningOrLimitationNote = "Full text was not saved."
+                    }
+                ]
+            };
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = new AnalysisMarkdownExportService(dbContext);
+
+                var result = await service.ExportAsync(analysis.Id, DateTimeOffset.UtcNow);
+
+                Assert.Equal(AnalysisMarkdownExportResultKind.Exported, result.Kind);
+                Assert.Contains("## Analysis result metadata", result.Markdown);
+                Assert.Contains("- **Analysis mode:** ExternalRag", result.Markdown);
+                Assert.Contains("- **Engine:** external-analysis-engine", result.Markdown);
+                Assert.Contains("- **Provider:** neutral-provider", result.Markdown);
+                Assert.Contains("- **Adapter:** neutral-adapter", result.Markdown);
+                Assert.Contains("- **Model workflow profile:** impact-workflow-profile", result.Markdown);
+                Assert.Contains("- **Manual context forwarded to external AI or RAG:** True", result.Markdown);
+                Assert.Contains("- **Retrieved context state:** MetadataOnly", result.Markdown);
+                Assert.Contains("- Only retrieved context metadata was saved.", result.Markdown);
+                Assert.Contains("## Retrieved context", result.Markdown);
+                Assert.Contains("- **State:** MetadataOnly", result.Markdown);
+                Assert.Contains(
+                    "Only retrieved context metadata was saved; full text or excerpts may be unavailable.",
+                    result.Markdown);
+                Assert.Contains("### Retrieved context item 1: Saved external requirement", result.Markdown);
+                Assert.Contains("- **Source id:** REQ-EXT-5", result.Markdown);
+                Assert.Contains("- **External reference:** external-record-5", result.Markdown);
+                Assert.Contains("- **Fragment id:** fragment-5", result.Markdown);
+                Assert.Contains("- **URL or reference:** kb://external/5", result.Markdown);
+                Assert.Contains("- **Rank:** 3", result.Markdown);
+                Assert.Contains("- **Score:** 0.73", result.Markdown);
+                Assert.Contains("- **Completeness:** MetadataOnly", result.Markdown);
+                Assert.Contains("- **Warning or limitation note:** Full text was not saved.", result.Markdown);
+                Assert.Contains("- **Text:** Not provided", result.Markdown);
+                Assert.Contains("- **Excerpt:** Not provided", result.Markdown);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task ExportAsync_ExportsLegacyMvp0ResultMetadataWithDirectLlmFallbacks()
     {
         var databasePath = CreateDatabasePath();
