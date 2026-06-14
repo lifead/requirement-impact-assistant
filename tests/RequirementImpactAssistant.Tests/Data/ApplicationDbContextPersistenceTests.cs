@@ -41,6 +41,17 @@ public sealed class ApplicationDbContextPersistenceTests
                 await dbContext.SaveChangesAsync();
             }
 
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM RetrievedContextItems;";
+
+                var retrievedContextItemCount = (long)(await command.ExecuteScalarAsync() ?? 0L);
+                Assert.Equal(0L, retrievedContextItemCount);
+            }
+
             await using (var dbContext = new ApplicationDbContext(options))
             {
                 var loadedAnalysis = await dbContext.Analyses

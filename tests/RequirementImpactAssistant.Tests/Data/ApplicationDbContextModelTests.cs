@@ -61,22 +61,35 @@ public sealed class ApplicationDbContextModelTests
     }
 
     [Fact]
-    public void Model_MapsAiAnalysisResultMetadataWithoutRetrievedContextItemStorage()
+    public void Model_MapsAiAnalysisResultMetadataWithRetrievedContextItemStorage()
     {
         using var dbContext = CreateDbContext();
         var model = dbContext.Model;
         var resultEntity = model.FindEntityType(typeof(AiAnalysisResult));
+        var retrievedContextItemEntity = model.GetEntityTypes()
+            .SingleOrDefault(entityType => entityType.ClrType == typeof(RetrievedContextItem));
 
         Assert.NotNull(resultEntity);
         Assert.Contains(
             resultEntity.GetNavigations(),
             navigation => navigation.Name == nameof(AiAnalysisResult.Metadata)
                 && navigation.TargetEntityType.GetTableName() == "AiAnalysisResults");
-        Assert.Null(model.FindEntityType(typeof(RetrievedContextItem)));
+
+        Assert.NotNull(retrievedContextItemEntity);
+        Assert.Equal("RetrievedContextItems", retrievedContextItemEntity.GetTableName());
+        Assert.True(retrievedContextItemEntity.IsOwned());
+        Assert.Contains(
+            retrievedContextItemEntity.GetForeignKeys(),
+            foreignKey => foreignKey.Properties.Any(property => property.Name == "AiAnalysisResultId")
+                && foreignKey.DeleteBehavior == DeleteBehavior.Cascade);
+        Assert.Contains(
+            retrievedContextItemEntity.GetProperties(),
+            property => property.Name == "Ordinal"
+                && retrievedContextItemEntity.FindPrimaryKey()!.Properties.Contains(property));
     }
 
     [Fact]
-    public async Task Migration_AddsOnlyAiAnalysisResultMetadataColumns()
+    public async Task Migration_AddsAiAnalysisResultMetadataColumnsAndRetrievedContextItemStorage()
     {
         await using var connection = new SqliteConnection("Data Source=:memory:");
         await connection.OpenAsync();
@@ -91,7 +104,10 @@ public sealed class ApplicationDbContextModelTests
         }
 
         var tableNames = await ReadTableNamesAsync(connection);
-        Assert.DoesNotContain("RetrievedContextItems", tableNames);
+        Assert.Contains("RetrievedContextItems", tableNames);
+        Assert.DoesNotContain("RetrievalTraces", tableNames);
+        Assert.DoesNotContain("RagTraces", tableNames);
+        Assert.DoesNotContain("ExternalProviderResponses", tableNames);
 
         var columns = await ReadTableColumnsAsync(connection, "AiAnalysisResults");
         Assert.True(columns.TryGetValue("AnalysisMode", out var analysisMode));
@@ -120,6 +136,23 @@ public sealed class ApplicationDbContextModelTests
         Assert.True(columns.TryGetValue("ManualContextForwardedToExternalAiOrRag", out var manualContextFlag));
         Assert.False(manualContextFlag.IsNullable);
         Assert.Equal("0", manualContextFlag.DefaultValue);
+
+        var retrievedContextColumns = await ReadTableColumnsAsync(connection, "RetrievedContextItems");
+        AssertRequiredColumn(retrievedContextColumns, "AiAnalysisResultId");
+        AssertRequiredColumn(retrievedContextColumns, "Ordinal");
+        AssertRequiredColumn(retrievedContextColumns, "SourceTitle");
+        AssertOptionalColumn(retrievedContextColumns, "SourceId");
+        AssertOptionalColumn(retrievedContextColumns, "ExternalReference");
+        AssertOptionalColumn(retrievedContextColumns, "FragmentId");
+        AssertOptionalColumn(retrievedContextColumns, "Text");
+        AssertOptionalColumn(retrievedContextColumns, "Excerpt");
+        AssertOptionalColumn(retrievedContextColumns, "UrlOrReference");
+        AssertOptionalColumn(retrievedContextColumns, "Rank");
+        AssertOptionalColumn(retrievedContextColumns, "Score");
+        AssertOptionalColumn(retrievedContextColumns, "ProviderName");
+        AssertOptionalColumn(retrievedContextColumns, "AdapterName");
+        AssertRequiredColumn(retrievedContextColumns, "Completeness");
+        AssertOptionalColumn(retrievedContextColumns, "WarningOrLimitationNote");
     }
 
     private static ApplicationDbContext CreateDbContext()
@@ -182,6 +215,22 @@ public sealed class ApplicationDbContextModelTests
                 foreignKey.PrincipalEntityType.ClrType == typeof(ExpertEvaluation)
                 && foreignKey.Properties.Any(property => property.Name == "ExpertEvaluationId")
                 && foreignKey.DeleteBehavior == DeleteBehavior.Cascade);
+    }
+
+    private static void AssertRequiredColumn(
+        IReadOnlyDictionary<string, SqliteColumnInfo> columns,
+        string columnName)
+    {
+        Assert.True(columns.TryGetValue(columnName, out var column));
+        Assert.False(column.IsNullable);
+    }
+
+    private static void AssertOptionalColumn(
+        IReadOnlyDictionary<string, SqliteColumnInfo> columns,
+        string columnName)
+    {
+        Assert.True(columns.TryGetValue(columnName, out var column));
+        Assert.True(column.IsNullable);
     }
 
     private sealed record SqliteColumnInfo(bool IsNullable, string? DefaultValue);

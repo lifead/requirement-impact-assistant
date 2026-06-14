@@ -240,7 +240,49 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             .IsRequired(false)
             .Metadata.SetValueComparer(StringListValueComparer);
 
-        metadata.Ignore(item => item.RetrievedContextItems);
+        metadata.OwnsMany(item => item.RetrievedContextItems, ConfigureRetrievedContextItem);
+    }
+
+    private static void ConfigureRetrievedContextItem(
+        OwnedNavigationBuilder<AiAnalysisResultMetadata, RetrievedContextItem> item)
+    {
+        item.ToTable("RetrievedContextItems");
+
+        item.WithOwner()
+            .HasForeignKey("AiAnalysisResultId");
+
+        item.Property<Guid>("AiAnalysisResultId");
+
+        item.Property<int>("Ordinal");
+
+        item.HasKey("AiAnalysisResultId", "Ordinal");
+
+        item.Property(contextItem => contextItem.SourceTitle)
+            .HasMaxLength(500)
+            .IsRequired();
+
+        item.Property(contextItem => contextItem.SourceId)
+            .HasMaxLength(300);
+
+        item.Property(contextItem => contextItem.ExternalReference)
+            .HasMaxLength(500);
+
+        item.Property(contextItem => contextItem.FragmentId)
+            .HasMaxLength(300);
+
+        item.Property(contextItem => contextItem.UrlOrReference)
+            .HasMaxLength(1_000);
+
+        item.Property(contextItem => contextItem.ProviderName)
+            .HasMaxLength(200);
+
+        item.Property(contextItem => contextItem.AdapterName)
+            .HasMaxLength(200);
+
+        item.Property(contextItem => contextItem.Completeness)
+            .HasConversion<string>()
+            .HasMaxLength(50)
+            .IsRequired();
     }
 
     private static void ConfigureImpactMap(
