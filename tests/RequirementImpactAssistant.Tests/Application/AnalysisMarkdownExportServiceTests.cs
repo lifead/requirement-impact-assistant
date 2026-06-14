@@ -168,6 +168,186 @@ public sealed class AnalysisMarkdownExportServiceTests
     }
 
     [Fact]
+    public void Build_ExportsAvailableRetrievedContextItemsWithSavedMetadata()
+    {
+        var analysis = CreateAnalysisGraph();
+        analysis.AiAnalysisResult!.Metadata = new AiAnalysisResultMetadata
+        {
+            AnalysisMode = AnalysisMode.ExternalRag,
+            EngineName = "external-analysis-engine",
+            ProviderName = "neutral-provider",
+            AdapterName = "neutral-adapter",
+            ModelWorkflowProfileName = "impact-workflow-profile",
+            RetrievedContextState = RetrievedContextState.Available,
+            ManualContextForwardedToExternalAiOrRag = true,
+            RetrievedContextItems =
+            [
+                new RetrievedContextItem
+                {
+                    SourceTitle = "API change request",
+                    SourceId = "REQ-17",
+                    ExternalReference = "external-doc-17",
+                    FragmentId = "chunk-03",
+                    Text = """
+                        Full retrieved fragment text.
+                        ```text
+                        Saved fence inside retrieved text.
+                        ```
+                        """,
+                    UrlOrReference = "kb://requirements/REQ-17",
+                    Rank = 1,
+                    Score = 0.94,
+                    ProviderName = "neutral-provider",
+                    AdapterName = "neutral-adapter",
+                    Completeness = RetrievedContextItemCompleteness.FullText
+                },
+                new RetrievedContextItem
+                {
+                    SourceTitle = "Integration inventory",
+                    ExternalReference = "inventory-record-42",
+                    UrlOrReference = "kb://inventory/42",
+                    Rank = 2,
+                    Score = 0.81,
+                    ProviderName = "neutral-provider",
+                    AdapterName = "neutral-adapter",
+                    Completeness = RetrievedContextItemCompleteness.MetadataOnly,
+                    WarningOrLimitationNote = "Only source metadata was returned."
+                }
+            ]
+        };
+
+        var markdown = new AnalysisMarkdownReportBuilder().Build(analysis, DateTimeOffset.UtcNow);
+
+        Assert.Contains("## Retrieved context", markdown);
+        Assert.Contains("- **State:** Available", markdown);
+        Assert.Contains("Retrieved context was saved for this analysis result.", markdown);
+        Assert.Contains("### Retrieved context item 1: API change request", markdown);
+        Assert.Contains("- **Source title:** API change request", markdown);
+        Assert.Contains("- **Source id:** REQ-17", markdown);
+        Assert.Contains("- **External reference:** external-doc-17", markdown);
+        Assert.Contains("- **Fragment id:** chunk-03", markdown);
+        Assert.Contains("- **URL or reference:** kb://requirements/REQ-17", markdown);
+        Assert.Contains("- **Rank:** 1", markdown);
+        Assert.Contains("- **Score:** 0.94", markdown);
+        Assert.Contains("- **Provider:** neutral-provider", markdown);
+        Assert.Contains("- **Adapter:** neutral-adapter", markdown);
+        Assert.Contains("- **Completeness:** FullText", markdown);
+        Assert.Contains("````text", markdown);
+        Assert.Contains("Saved fence inside retrieved text.", markdown);
+        Assert.Contains("### Retrieved context item 2: Integration inventory", markdown);
+        Assert.Contains("- **Completeness:** MetadataOnly", markdown);
+        Assert.Contains("- **Warning or limitation note:** Only source metadata was returned.", markdown);
+        Assert.Contains("- **Text:** Not provided", markdown);
+        Assert.Contains("- **Excerpt:** Not provided", markdown);
+    }
+
+    [Fact]
+    public void Build_ExportsPartialRetrievedContextItemWithExcerptAndLimitation()
+    {
+        var analysis = CreateAnalysisGraph();
+        analysis.AiAnalysisResult!.Metadata = new AiAnalysisResultMetadata
+        {
+            AnalysisMode = AnalysisMode.ExternalRag,
+            EngineName = "external-analysis-engine",
+            AdapterName = "neutral-adapter",
+            RetrievedContextState = RetrievedContextState.Partial,
+            Warnings = ["Retrieved context is partial."],
+            RetrievedContextItems =
+            [
+                new RetrievedContextItem
+                {
+                    SourceTitle = "Requirement summary",
+                    SourceId = "REQ-21",
+                    Excerpt = "Only an excerpt was returned.",
+                    Rank = 1,
+                    Completeness = RetrievedContextItemCompleteness.ExcerptOnly,
+                    WarningOrLimitationNote = "Full text was not returned by the external engine."
+                }
+            ]
+        };
+
+        var markdown = new AnalysisMarkdownReportBuilder().Build(analysis, DateTimeOffset.UtcNow);
+
+        Assert.Contains("- **State:** Partial", markdown);
+        Assert.Contains(
+            "Retrieved context was saved only partially; review item completeness and limitation notes.",
+            markdown);
+        Assert.Contains("### Retrieved context item 1: Requirement summary", markdown);
+        Assert.Contains("- **Completeness:** ExcerptOnly", markdown);
+        Assert.Contains(
+            "- **Warning or limitation note:** Full text was not returned by the external engine.",
+            markdown);
+        Assert.Contains("**Excerpt:**", markdown);
+        Assert.Contains("Only an excerpt was returned.", markdown);
+        Assert.Contains("- Retrieved context is partial.", markdown);
+    }
+
+    [Fact]
+    public void Build_ExportsMetadataOnlyRetrievedContextItemWithoutTextOrExcerpt()
+    {
+        var analysis = CreateAnalysisGraph();
+        analysis.AiAnalysisResult!.Metadata = new AiAnalysisResultMetadata
+        {
+            AnalysisMode = AnalysisMode.ExternalRag,
+            EngineName = "external-analysis-engine",
+            ProviderName = "neutral-provider",
+            AdapterName = "neutral-adapter",
+            RetrievedContextState = RetrievedContextState.MetadataOnly,
+            RetrievedContextItems =
+            [
+                new RetrievedContextItem
+                {
+                    SourceTitle = "Integration inventory",
+                    ExternalReference = "inventory-record-42",
+                    UrlOrReference = "kb://inventory/42",
+                    Rank = 2,
+                    Score = 0.81,
+                    ProviderName = "neutral-provider",
+                    AdapterName = "neutral-adapter",
+                    Completeness = RetrievedContextItemCompleteness.MetadataOnly,
+                    WarningOrLimitationNote = "Only source metadata was returned."
+                }
+            ]
+        };
+
+        var markdown = new AnalysisMarkdownReportBuilder().Build(analysis, DateTimeOffset.UtcNow);
+
+        Assert.Contains("## Retrieved context", markdown);
+        Assert.Contains("- **State:** MetadataOnly", markdown);
+        Assert.Contains(
+            "Only retrieved context metadata was saved; full text or excerpts may be unavailable.",
+            markdown);
+        Assert.Contains("### Retrieved context item 1: Integration inventory", markdown);
+        Assert.Contains("- **External reference:** inventory-record-42", markdown);
+        Assert.Contains("- **URL or reference:** kb://inventory/42", markdown);
+        Assert.Contains("- **Score:** 0.81", markdown);
+        Assert.Contains("- **Completeness:** MetadataOnly", markdown);
+        Assert.Contains("- **Warning or limitation note:** Only source metadata was returned.", markdown);
+        Assert.Contains("- **Text:** Not provided", markdown);
+        Assert.Contains("- **Excerpt:** Not provided", markdown);
+    }
+
+    [Fact]
+    public void Build_ExportsUnavailableRetrievedContextWithoutArtificialItems()
+    {
+        var analysis = CreateAnalysisGraph();
+        analysis.AiAnalysisResult!.Metadata = new AiAnalysisResultMetadata
+        {
+            AnalysisMode = AnalysisMode.ExternalRag,
+            EngineName = "external-analysis-engine",
+            RetrievedContextState = RetrievedContextState.Unavailable
+        };
+
+        var markdown = new AnalysisMarkdownReportBuilder().Build(analysis, DateTimeOffset.UtcNow);
+
+        Assert.Contains("## Retrieved context", markdown);
+        Assert.Contains("- **State:** Unavailable", markdown);
+        Assert.Contains("Retrieved context is unavailable for this saved analysis result.", markdown);
+        Assert.Contains("No retrieved context items were saved.", markdown);
+        Assert.DoesNotContain("### Retrieved context item 1:", markdown);
+    }
+
+    [Fact]
     public async Task ExportAsync_ExportsLegacyMvp0ResultMetadataWithDirectLlmFallbacks()
     {
         var databasePath = CreateDatabasePath();
@@ -200,7 +380,10 @@ public sealed class AnalysisMarkdownExportServiceTests
                 Assert.Contains("- **Manual context forwarded to external AI or RAG:** False", result.Markdown);
                 Assert.Contains("- **Retrieved context state:** Unavailable", result.Markdown);
                 Assert.Contains("No warnings were saved.", result.Markdown);
-                Assert.DoesNotContain("Retrieved context items", result.Markdown);
+                Assert.Contains("## Retrieved context", result.Markdown);
+                Assert.Contains("- **State:** Unavailable", result.Markdown);
+                Assert.Contains("No retrieved context items were saved.", result.Markdown);
+                Assert.DoesNotContain("### Retrieved context item 1:", result.Markdown);
             }
         }
         finally
@@ -263,7 +446,10 @@ public sealed class AnalysisMarkdownExportServiceTests
         Assert.Contains("- **Retrieved context state:** Unavailable", markdown);
         Assert.Contains("### Warnings", markdown);
         Assert.Contains("- Saved warning from direct LLM metadata.", markdown);
-        Assert.DoesNotContain("Retrieved context items", markdown);
+        Assert.Contains("## Retrieved context", markdown);
+        Assert.Contains("- **State:** Unavailable", markdown);
+        Assert.Contains("Retrieved context is unavailable for this saved analysis result.", markdown);
+        Assert.Contains("No retrieved context items were saved.", markdown);
         Assert.Contains("## Input", markdown);
         Assert.Contains("**Original requirement:**", markdown);
         Assert.Contains("Change payment API response.", markdown);
