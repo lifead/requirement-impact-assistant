@@ -70,34 +70,115 @@ internal static class DifyExternalRagMapper
         DifyExternalRagOptions options)
     {
         var outputs = response.Data?.Outputs;
+        var providerStatus = response.Data?.Status;
+        if (IsProviderFailureStatus(providerStatus))
+        {
+            return CreateFailureResponse(
+                request,
+                options,
+                providerStatus: providerStatus,
+                errorCode: "dify_provider_error",
+                errorMessage: "Dify external RAG provider reported a failed analysis.",
+                diagnosticDetails: "Provider status indicated failure.",
+                warnings: ["Dify external RAG provider did not complete the analysis."]);
+        }
+
         if (outputs?.ImpactMap is null)
         {
-            throw new InvalidOperationException("Dify response did not contain a structured impact map.");
+            return CreateFailureResponse(
+                request,
+                options,
+                providerStatus: providerStatus,
+                errorCode: "dify_incomplete_response",
+                errorMessage: "Dify external RAG provider response did not contain a structured impact map.",
+                diagnosticDetails: "Expected structured impact map was missing from provider outputs.",
+                warnings: ["Dify external RAG provider returned an incomplete structured response."]);
         }
 
         var retrievedContextItems = outputs.RetrievedContext
             .Select(MapRetrievedContextItem)
             .ToArray();
-        var retrievedContextState = retrievedContextItems.Length == 0
-            ? RetrievedContextState.Unavailable
-            : RetrievedContextState.Available;
+        var retrievedContextState = CreateRetrievedContextState(retrievedContextItems);
         var metadata = CreateMetadata(request, response, options);
+        var warnings = CreateWarnings(outputs.Warnings, retrievedContextState);
+        var status = CreateResponseStatus(retrievedContextState, warnings);
 
         return new ExternalRagAdapterResponse(
-            Status: ExternalRagAdapterResponseStatus.Completed,
+            Status: status,
             ImpactMap: MapImpactMap(outputs.ImpactMap),
             Metadata: metadata,
             RetrievedContextState: retrievedContextState,
             RetrievedContextItems: retrievedContextItems,
-            Warnings: outputs.Warnings,
+            Warnings: warnings,
             Errors: [],
             SanitizedDiagnosticSnapshot: CreateDiagnosticSnapshot(
                 request.CorrelationId,
-                ExternalRagAdapterResponseStatus.Completed,
+                status,
                 metadata,
                 response.Data?.Status,
                 retrievedContextState,
                 retrievedContextItems.Length));
+    }
+
+    public static ExternalRagAdapterResponse CreateUnavailableConfigurationResponse(
+        ExternalRagAdapterRequest request,
+        DifyExternalRagOptions options,
+        DifyExternalRagConfigurationStatus configurationStatus)
+    {
+        var disabled = !configurationStatus.IsEnabled;
+        var diagnosticDetails = disabled
+            ? "Dify adapter is disabled."
+            : string.Join(" ", configurationStatus.Reasons);
+
+        return CreateFailureResponse(
+            request,
+            options,
+            providerStatus: disabled ? "disabled" : "configuration-unavailable",
+            errorCode: disabled ? "dify_disabled" : "dify_configuration_unavailable",
+            errorMessage: disabled
+                ? "Dify external RAG adapter is disabled."
+                : "Dify external RAG adapter is unavailable because its configuration is incomplete.",
+            diagnosticDetails: diagnosticDetails,
+            warnings:
+            [
+                disabled
+                    ? "Dify external RAG adapter is disabled."
+                    : "Dify external RAG adapter is unavailable; configuration is incomplete."
+            ]);
+    }
+
+    public static ExternalRagAdapterResponse CreateFailureResponse(
+        ExternalRagAdapterRequest request,
+        DifyExternalRagOptions options,
+        string? providerStatus,
+        string errorCode,
+        string errorMessage,
+        string? diagnosticDetails,
+        IReadOnlyList<string> warnings)
+    {
+        var metadata = CreateFailureMetadata(request, options, providerStatus);
+
+        return new ExternalRagAdapterResponse(
+            Status: ExternalRagAdapterResponseStatus.Failed,
+            ImpactMap: null,
+            Metadata: metadata,
+            RetrievedContextState: RetrievedContextState.Unavailable,
+            RetrievedContextItems: [],
+            Warnings: warnings,
+            Errors:
+            [
+                new ExternalRagAdapterError(
+                    Code: errorCode,
+                    Message: errorMessage,
+                    DiagnosticDetails: NormalizeOptional(diagnosticDetails))
+            ],
+            SanitizedDiagnosticSnapshot: CreateDiagnosticSnapshot(
+                request.CorrelationId,
+                ExternalRagAdapterResponseStatus.Failed,
+                metadata,
+                providerStatus,
+                RetrievedContextState.Unavailable,
+                retrievedContextItemCount: 0));
     }
 
     private static DifyManualContextDto? CreateManualContext(ExternalRagManualContextBlock? manualContext)
@@ -139,10 +220,27 @@ internal static class DifyExternalRagMapper
                 NormalizeOptional(options.ProfileName),
             SanitizedProperties: new Dictionary<string, string>
             {
-                ["providerStatus"] = NormalizeOptional(response.Data?.Status) ?? "unknown",
+                ["providerStatus"] = NormalizeProviderStatusForDiagnostics(response.Data?.Status),
                 ["responseShape"] = NormalizeOptional(responseShape) ?? "dify-workflow-outputs"
             });
     }
+
+    private static ExternalRagAdapterResponseMetadata CreateFailureMetadata(
+        ExternalRagAdapterRequest request,
+        DifyExternalRagOptions options,
+        string? providerStatus) =>
+        new(
+            ProviderName: ProviderName,
+            AdapterName: AdapterName,
+            ModelName: null,
+            WorkflowName: NormalizeOptional(options.WorkflowOrAppId),
+            ProfileName: NormalizeOptional(request.ExecutionMetadata.RequestedProfileName) ??
+                NormalizeOptional(options.ProfileName),
+            SanitizedProperties: new Dictionary<string, string>
+            {
+                ["providerStatus"] = NormalizeProviderStatusForDiagnostics(providerStatus),
+                ["responseShape"] = "unavailable"
+            });
 
     private static ImpactMap MapImpactMap(DifyImpactMapDto source)
     {
@@ -240,6 +338,73 @@ internal static class DifyExternalRagMapper
         return RetrievedContextItemCompleteness.MetadataOnly;
     }
 
+    private static RetrievedContextState CreateRetrievedContextState(
+        IReadOnlyList<RetrievedContextItem> retrievedContextItems)
+    {
+        if (retrievedContextItems.Count == 0)
+        {
+            return RetrievedContextState.Unavailable;
+        }
+
+        if (retrievedContextItems.All(item => item.Completeness == RetrievedContextItemCompleteness.FullText))
+        {
+            return RetrievedContextState.Available;
+        }
+
+        if (retrievedContextItems.All(item => item.Completeness == RetrievedContextItemCompleteness.MetadataOnly))
+        {
+            return RetrievedContextState.MetadataOnly;
+        }
+
+        return RetrievedContextState.Partial;
+    }
+
+    private static ExternalRagAdapterResponseStatus CreateResponseStatus(
+        RetrievedContextState retrievedContextState,
+        IReadOnlyList<string> warnings) =>
+        retrievedContextState switch
+        {
+            RetrievedContextState.Partial => ExternalRagAdapterResponseStatus.Partial,
+            RetrievedContextState.MetadataOnly or RetrievedContextState.Unavailable =>
+                ExternalRagAdapterResponseStatus.CompletedWithWarnings,
+            _ when warnings.Count > 0 => ExternalRagAdapterResponseStatus.CompletedWithWarnings,
+            _ => ExternalRagAdapterResponseStatus.Completed
+        };
+
+    private static IReadOnlyList<string> CreateWarnings(
+        IReadOnlyList<string> providerWarnings,
+        RetrievedContextState retrievedContextState)
+    {
+        var warnings = providerWarnings
+            .Where(warning => !string.IsNullOrWhiteSpace(warning))
+            .Select(warning => warning.Trim())
+            .ToList();
+
+        switch (retrievedContextState)
+        {
+            case RetrievedContextState.Unavailable:
+                warnings.Add("Dify returned structured impact analysis without retrieved context.");
+                break;
+            case RetrievedContextState.MetadataOnly:
+                warnings.Add("Dify returned retrieved context metadata without source text or excerpts.");
+                break;
+            case RetrievedContextState.Partial:
+                warnings.Add("Dify returned partial retrieved context; full source text was not available for every item.");
+                break;
+        }
+
+        return warnings
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static bool IsProviderFailureStatus(string? providerStatus)
+    {
+        var normalizedStatus = NormalizeProviderStatusForDiagnostics(providerStatus);
+
+        return normalizedStatus is "failed" or "error";
+    }
+
     private static string CreateDiagnosticSnapshot(
         Guid correlationId,
         ExternalRagAdapterResponseStatus status,
@@ -255,7 +420,7 @@ internal static class DifyExternalRagMapper
             adapter = metadata.AdapterName,
             workflow = metadata.WorkflowName,
             profile = metadata.ProfileName,
-            providerStatus = NormalizeOptional(providerStatus) ?? "unknown",
+            providerStatus = NormalizeProviderStatusForDiagnostics(providerStatus),
             retrievedContextState = retrievedContextState.ToString(),
             retrievedContextItemCount,
             correlationId
@@ -276,4 +441,47 @@ internal static class DifyExternalRagMapper
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static string NormalizeProviderStatusForDiagnostics(string? providerStatus)
+    {
+        var normalizedStatus = NormalizeOptional(providerStatus);
+        if (normalizedStatus is null)
+        {
+            return "unknown";
+        }
+
+        if (IsSafeHttpStatus(normalizedStatus))
+        {
+            return normalizedStatus.ToLowerInvariant();
+        }
+
+        var safeStatus = normalizedStatus.ToLowerInvariant();
+        return safeStatus switch
+        {
+            "succeeded" or
+            "completed" or
+            "success" or
+            "failed" or
+            "error" or
+            "stopped" or
+            "running" or
+            "timeout" or
+            "transport-error" or
+            "malformed-response" or
+            "disabled" or
+            "configuration-unavailable" => safeStatus,
+            _ => "unknown"
+        };
+    }
+
+    private static bool IsSafeHttpStatus(string value)
+    {
+        if (!value.StartsWith("http-", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return int.TryParse(value.AsSpan("http-".Length), out var statusCode) &&
+            statusCode is >= 100 and <= 599;
+    }
 }

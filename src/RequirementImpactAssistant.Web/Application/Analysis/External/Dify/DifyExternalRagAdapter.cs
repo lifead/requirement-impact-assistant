@@ -27,15 +27,38 @@ public sealed class DifyExternalRagAdapter : IExternalRagAdapter
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        var configurationStatus = _options.GetConfigurationStatus();
+        if (!configurationStatus.IsConfigured)
+        {
+            return DifyExternalRagMapper.CreateUnavailableConfigurationResponse(
+                request,
+                _options,
+                configurationStatus);
+        }
+
         var endpoint = CreateEndpoint();
         if (endpoint is null)
         {
-            throw new InvalidOperationException("Dify endpoint is not configured as a valid absolute URL.");
+            return DifyExternalRagMapper.CreateFailureResponse(
+                request,
+                _options,
+                providerStatus: null,
+                errorCode: "dify_configuration_unavailable",
+                errorMessage: "Dify external RAG adapter is unavailable because its configuration is incomplete.",
+                diagnosticDetails: "Configured endpoint is not a valid absolute HTTP or HTTPS URI.",
+                warnings: ["Dify external RAG adapter is unavailable; configuration is incomplete."]);
         }
 
         if (string.IsNullOrWhiteSpace(_options.ApiKey))
         {
-            throw new InvalidOperationException("Dify API key is not configured.");
+            return DifyExternalRagMapper.CreateFailureResponse(
+                request,
+                _options,
+                providerStatus: null,
+                errorCode: "dify_configuration_unavailable",
+                errorMessage: "Dify external RAG adapter is unavailable because its configuration is incomplete.",
+                diagnosticDetails: "Configured API key is missing.",
+                warnings: ["Dify external RAG adapter is unavailable; configuration is incomplete."]);
         }
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpoint);
@@ -45,18 +68,72 @@ public sealed class DifyExternalRagAdapter : IExternalRagAdapter
             Encoding.UTF8,
             MediaTypeNames.Application.Json);
 
-        using var httpResponse = await _httpClient
-            .SendAsync(httpRequest, cancellationToken)
-            .ConfigureAwait(false);
-        httpResponse.EnsureSuccessStatusCode();
+        using var timeoutCts = CreateTimeoutTokenSource();
+        using var linkedCts = timeoutCts is null
+            ? null
+            : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
+        var effectiveCancellationToken = linkedCts?.Token ?? cancellationToken;
 
-        var responseBody = await httpResponse.Content
-            .ReadAsStringAsync(cancellationToken)
-            .ConfigureAwait(false);
-        var difyResponse = JsonSerializer.Deserialize<DifyWorkflowResponseDto>(responseBody, JsonOptions)
-            ?? new DifyWorkflowResponseDto();
+        try
+        {
+            using var httpResponse = await _httpClient
+                .SendAsync(httpRequest, effectiveCancellationToken)
+                .ConfigureAwait(false);
 
-        return DifyExternalRagMapper.CreateResponse(request, difyResponse, _options);
+            if (!httpResponse.IsSuccessStatusCode)
+            {
+                return DifyExternalRagMapper.CreateFailureResponse(
+                    request,
+                    _options,
+                    providerStatus: $"http-{(int)httpResponse.StatusCode}",
+                    errorCode: "dify_provider_error",
+                    errorMessage: "Dify external RAG provider returned an unsuccessful response.",
+                    diagnosticDetails: $"HTTP status {(int)httpResponse.StatusCode}.",
+                    warnings: ["Dify external RAG provider did not complete the analysis."]);
+            }
+
+            var responseBody = await httpResponse.Content
+                .ReadAsStringAsync(effectiveCancellationToken)
+                .ConfigureAwait(false);
+            var difyResponse = JsonSerializer.Deserialize<DifyWorkflowResponseDto>(responseBody, JsonOptions)
+                ?? new DifyWorkflowResponseDto();
+
+            return DifyExternalRagMapper.CreateResponse(request, difyResponse, _options);
+        }
+        catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true &&
+            !cancellationToken.IsCancellationRequested)
+        {
+            return DifyExternalRagMapper.CreateFailureResponse(
+                request,
+                _options,
+                providerStatus: "timeout",
+                errorCode: "dify_timeout",
+                errorMessage: "Dify external RAG provider did not respond before the configured timeout.",
+                diagnosticDetails: "The provider request timed out.",
+                warnings: ["Dify external RAG provider timed out."]);
+        }
+        catch (HttpRequestException)
+        {
+            return DifyExternalRagMapper.CreateFailureResponse(
+                request,
+                _options,
+                providerStatus: "transport-error",
+                errorCode: "dify_transport_error",
+                errorMessage: "Dify external RAG provider could not be reached.",
+                diagnosticDetails: "The provider request failed at the HTTP transport layer.",
+                warnings: ["Dify external RAG provider is unavailable."]);
+        }
+        catch (JsonException)
+        {
+            return DifyExternalRagMapper.CreateFailureResponse(
+                request,
+                _options,
+                providerStatus: "malformed-response",
+                errorCode: "dify_malformed_response",
+                errorMessage: "Dify external RAG provider returned a malformed response.",
+                diagnosticDetails: "The provider response could not be parsed as the expected JSON shape.",
+                warnings: ["Dify external RAG provider returned a malformed response."]);
+        }
     }
 
     private Uri? CreateEndpoint()
@@ -67,5 +144,15 @@ public sealed class DifyExternalRagAdapter : IExternalRagAdapter
         }
 
         return endpoint;
+    }
+
+    private CancellationTokenSource? CreateTimeoutTokenSource()
+    {
+        if (_options.TimeoutSeconds is null)
+        {
+            return null;
+        }
+
+        return new CancellationTokenSource(TimeSpan.FromSeconds(_options.TimeoutSeconds.Value));
     }
 }
