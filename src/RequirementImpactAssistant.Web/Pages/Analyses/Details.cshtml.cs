@@ -254,6 +254,20 @@ public sealed class DetailsModel(
             metadata.Warnings
                 .Where(warning => !string.IsNullOrWhiteSpace(warning))
                 .Select(warning => warning.Trim())
+                .ToList(),
+            metadata.RetrievedContextItems
+                .Select(item => new RetrievedContextItemDetails(
+                    item.SourceTitle,
+                    item.SourceId,
+                    item.ExternalReference,
+                    item.FragmentId,
+                    item.Text,
+                    item.Excerpt,
+                    item.UrlOrReference,
+                    item.Rank,
+                    item.Score,
+                    item.Completeness,
+                    item.WarningOrLimitationNote))
                 .ToList());
 
     private async Task<AnalysisDetails?> LoadAnalysisDetailsAsync(Guid id)
@@ -262,6 +276,7 @@ public sealed class DetailsModel(
             .AsNoTracking()
             .Include(candidate => candidate.ContextFragments)
             .Include(candidate => candidate.AiAnalysisResult)
+                .ThenInclude(result => result!.Metadata.RetrievedContextItems)
             .Include(candidate => candidate.ExpertEvaluation)
             .Include(candidate => candidate.ExpertConclusion)
             .SingleOrDefaultAsync(candidate => candidate.Id == id);
@@ -332,7 +347,21 @@ public sealed class DetailsModel(
         string? ModelWorkflowProfileName,
         RetrievedContextState RetrievedContextState,
         bool ManualContextForwardedToExternalAiOrRag,
-        IReadOnlyList<string> Warnings);
+        IReadOnlyList<string> Warnings,
+        IReadOnlyList<RetrievedContextItemDetails> RetrievedContextItems);
+
+    public sealed record RetrievedContextItemDetails(
+        string SourceTitle,
+        string? SourceId,
+        string? ExternalReference,
+        string? FragmentId,
+        string? Text,
+        string? Excerpt,
+        string? UrlOrReference,
+        int? Rank,
+        double? Score,
+        RetrievedContextItemCompleteness Completeness,
+        string? WarningOrLimitationNote);
 
     public sealed record ImpactMapSectionDetails(
         string Title,

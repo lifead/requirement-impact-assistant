@@ -1500,12 +1500,14 @@ public sealed class AnalysisPagesTests
                 Assert.Equal("direct-llm-engine", metadata.EngineName);
                 Assert.Equal("demo-provider", metadata.ProviderName);
                 Assert.Equal("demo-profile", metadata.ModelWorkflowProfileName);
+                Assert.Equal("{ \"raw\": \"response\" }", pageModel.Analysis.AiAnalysisResult.RawResponse);
                 Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
                 Assert.Equal(
                     "Контекст не сохранен",
                     AnalysisUiText.RetrievedContextStateLabel(metadata.RetrievedContextState));
                 Assert.False(metadata.ManualContextForwardedToExternalAiOrRag);
                 Assert.Empty(metadata.Warnings);
+                Assert.Empty(metadata.RetrievedContextItems);
             }
 
             var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
@@ -1593,7 +1595,284 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
-    public void DetailsPage_SourceDoesNotContainProviderSpecificUiPayloadFieldsOrRetrievedContextItems()
+    public async Task DetailsPage_AvailableRetrievedContextShowsSavedTextAndNeutralMetadata()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            analysis.ContextFragments.Add(CreateContextFragment(
+                analysis.Id,
+                ContextFragmentType.Task,
+                "Manual task context",
+                "Manual context must stay separate.",
+                new DateTimeOffset(2026, 06, 13, 08, 30, 00, TimeSpan.Zero)));
+
+            var aiResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.Completed, CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                ProviderName = "result-level-provider",
+                AdapterName = "result-level-adapter",
+                RetrievedContextState = RetrievedContextState.Available,
+                RetrievedContextItems =
+                [
+                    new RetrievedContextItem
+                    {
+                        SourceTitle = "Gateway API requirement",
+                        SourceId = "REQ-42",
+                        ExternalReference = "kb-doc-42",
+                        FragmentId = "fragment-7",
+                        Text = "Saved full retrieved context text.",
+                        UrlOrReference = "kb://requirements/REQ-42",
+                        Rank = 1,
+                        Score = 0.92,
+                        ProviderName = "item-provider-should-not-be-projected",
+                        AdapterName = "item-adapter-should-not-be-projected",
+                        Completeness = RetrievedContextItemCompleteness.FullText
+                    }
+                ]
+            };
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(RetrievedContextState.Available, metadata.RetrievedContextState);
+                var item = Assert.Single(metadata.RetrievedContextItems);
+                Assert.Equal("Gateway API requirement", item.SourceTitle);
+                Assert.Equal("REQ-42", item.SourceId);
+                Assert.Equal("kb-doc-42", item.ExternalReference);
+                Assert.Equal("fragment-7", item.FragmentId);
+                Assert.Equal("Saved full retrieved context text.", item.Text);
+                Assert.Null(item.Excerpt);
+                Assert.Equal("kb://requirements/REQ-42", item.UrlOrReference);
+                Assert.Equal(1, item.Rank);
+                Assert.Equal(0.92, item.Score);
+                Assert.Equal(RetrievedContextItemCompleteness.FullText, item.Completeness);
+                Assert.Null(item.WarningOrLimitationNote);
+                Assert.DoesNotContain(
+                    nameof(RetrievedContextItem.ProviderName),
+                    typeof(DetailsModel.RetrievedContextItemDetails).GetProperties().Select(property => property.Name));
+                Assert.DoesNotContain(
+                    nameof(RetrievedContextItem.AdapterName),
+                    typeof(DetailsModel.RetrievedContextItemDetails).GetProperties().Select(property => property.Name));
+                Assert.Single(pageModel.Analysis.ContextFragments);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_MetadataOnlyRetrievedContextDoesNotPretendFullTextExists()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.Completed, CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                RetrievedContextState = RetrievedContextState.MetadataOnly,
+                RetrievedContextItems =
+                [
+                    new RetrievedContextItem
+                    {
+                        SourceTitle = "Integration inventory",
+                        ExternalReference = "inventory-record-12",
+                        UrlOrReference = "kb://inventory/12",
+                        Rank = 2,
+                        Score = 0.81,
+                        Completeness = RetrievedContextItemCompleteness.MetadataOnly,
+                        WarningOrLimitationNote = "External circuit returned source metadata without fragment text."
+                    }
+                ]
+            };
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(RetrievedContextState.MetadataOnly, metadata.RetrievedContextState);
+                Assert.Equal(
+                    "Сохранены только сведения об источниках; полный текст и выдержки не сохранены.",
+                    AnalysisUiText.RetrievedContextStateDescription(metadata.RetrievedContextState));
+                var item = Assert.Single(metadata.RetrievedContextItems);
+                Assert.Equal(RetrievedContextItemCompleteness.MetadataOnly, item.Completeness);
+                Assert.Null(item.Text);
+                Assert.Null(item.Excerpt);
+                Assert.Equal("Integration inventory", item.SourceTitle);
+                Assert.Equal("inventory-record-12", item.ExternalReference);
+                Assert.Equal("External circuit returned source metadata without fragment text.", item.WarningOrLimitationNote);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_PartialRetrievedContextShowsLimitationAndSavedTextExcerptMix()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.CompletedWithWarnings, CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                RetrievedContextState = RetrievedContextState.Partial,
+                RetrievedContextItems =
+                [
+                    new RetrievedContextItem
+                    {
+                        SourceTitle = "Partial source",
+                        Text = "Saved full text.",
+                        Excerpt = "Saved excerpt.",
+                        Rank = 1,
+                        Completeness = RetrievedContextItemCompleteness.FullText,
+                        WarningOrLimitationNote = "Only part of retrieved basis was available for saved display."
+                    }
+                ],
+                Warnings = ["Retrieved context was partial."]
+            };
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(RetrievedContextState.Partial, metadata.RetrievedContextState);
+                Assert.Contains("ограничения", AnalysisUiText.RetrievedContextStateDescription(metadata.RetrievedContextState));
+                var item = Assert.Single(metadata.RetrievedContextItems);
+                Assert.Equal("Partial source", item.SourceTitle);
+                Assert.Equal("Saved full text.", item.Text);
+                Assert.Equal("Saved excerpt.", item.Excerpt);
+                Assert.Equal(RetrievedContextItemCompleteness.FullText, item.Completeness);
+                Assert.Equal("Only part of retrieved basis was available for saved display.", item.WarningOrLimitationNote);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_UnavailableRetrievedContextShowsReproducibilityLimitation()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.CompletedWithWarnings, CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                RetrievedContextState = RetrievedContextState.Unavailable,
+                Warnings = ["Retrieved context was unavailable."]
+            };
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
+                Assert.Empty(metadata.RetrievedContextItems);
+                Assert.Contains(
+                    "воспроизводимость",
+                    AnalysisUiText.RetrievedContextStateDescription(metadata.RetrievedContextState));
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public void DetailsPage_SourceDoesNotContainProviderSpecificUiPayloadFields()
     {
         var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
         var detailsModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml.cs");
@@ -1610,13 +1889,16 @@ public sealed class AnalysisPagesTests
             "providerStatus",
             "responseShape",
             "SanitizedDiagnosticSnapshot",
-            "SanitizedProperties",
-            "RetrievedContextItems"
+            "SanitizedProperties"
         };
 
         Assert.All(
             forbiddenTokens,
             token => Assert.DoesNotContain(token, combinedSource, StringComparison.OrdinalIgnoreCase));
+
+        Assert.Contains("@aiResult.RawResponse", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("string RawResponse", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("RetrievedContextItems", combinedSource, StringComparison.Ordinal);
     }
 
     [Fact]

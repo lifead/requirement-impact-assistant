@@ -197,6 +197,112 @@
                 }
             </section>
 
+            @if (aiResult.Metadata.AnalysisMode == AnalysisMode.ExternalRag ||
+                aiResult.Metadata.RetrievedContextItems.Count > 0)
+            {
+                <section class="mb-4">
+                    <h3 class="h5 mb-3">Основание external AI/RAG результата</h3>
+
+                    <dl class="row">
+                        <dt class="col-sm-3">Состояние</dt>
+                        <dd class="col-sm-9">@AnalysisUiText.RetrievedContextStateLabel(aiResult.Metadata.RetrievedContextState)</dd>
+
+                        <dt class="col-sm-3">Ограничение</dt>
+                        <dd class="col-sm-9">@AnalysisUiText.RetrievedContextStateDescription(aiResult.Metadata.RetrievedContextState)</dd>
+                    </dl>
+
+                    @if (aiResult.Metadata.RetrievedContextItems.Count == 0)
+                    {
+                        <div class="alert alert-warning" role="status">
+                            Сохраненных элементов retrieved context нет; результат нельзя воспроизвести по сохраненному внешнему основанию.
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="d-grid gap-3">
+                            @foreach (var item in aiResult.Metadata.RetrievedContextItems)
+                            {
+                                <article class="border rounded p-3">
+                                    <div class="d-flex align-items-start justify-content-between gap-3 mb-3">
+                                        <div>
+                                            <h4 class="h6 mb-1">@item.SourceTitle</h4>
+                                            <div class="text-muted small">
+                                                @AnalysisUiText.RetrievedContextItemCompletenessLabel(item.Completeness)
+                                            </div>
+                                        </div>
+                                        @if (item.Rank is not null)
+                                        {
+                                            <span class="badge text-bg-secondary">Rank @item.Rank</span>
+                                        }
+                                    </div>
+
+                                    <dl class="row mb-3">
+                                        @if (!string.IsNullOrWhiteSpace(item.SourceId))
+                                        {
+                                            <dt class="col-sm-3">Source ID</dt>
+                                            <dd class="col-sm-9"><code>@item.SourceId</code></dd>
+                                        }
+
+                                        @if (!string.IsNullOrWhiteSpace(item.ExternalReference))
+                                        {
+                                            <dt class="col-sm-3">External reference</dt>
+                                            <dd class="col-sm-9">@item.ExternalReference</dd>
+                                        }
+
+                                        @if (!string.IsNullOrWhiteSpace(item.FragmentId))
+                                        {
+                                            <dt class="col-sm-3">Fragment ID</dt>
+                                            <dd class="col-sm-9"><code>@item.FragmentId</code></dd>
+                                        }
+
+                                        @if (!string.IsNullOrWhiteSpace(item.UrlOrReference))
+                                        {
+                                            <dt class="col-sm-3">URL/reference</dt>
+                                            <dd class="col-sm-9 text-break">@item.UrlOrReference</dd>
+                                        }
+
+                                        @if (item.Score is not null)
+                                        {
+                                            <dt class="col-sm-3">Score</dt>
+                                            <dd class="col-sm-9">@item.Score.Value.ToString("0.###")</dd>
+                                        }
+                                    </dl>
+
+                                    @if (!string.IsNullOrWhiteSpace(item.Text))
+                                    {
+                                        <div class="mb-3">
+                                            <h5 class="h6">Сохраненный текст</h5>
+                                            <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap mb-0">@item.Text</pre>
+                                        </div>
+                                    }
+
+                                    @if (!string.IsNullOrWhiteSpace(item.Excerpt))
+                                    {
+                                        <div class="mb-3">
+                                            <h5 class="h6">Сохраненная выдержка</h5>
+                                            <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap mb-0">@item.Excerpt</pre>
+                                        </div>
+                                    }
+
+                                    @if (string.IsNullOrWhiteSpace(item.Text) &&
+                                        string.IsNullOrWhiteSpace(item.Excerpt))
+                                    {
+                                        <p class="text-muted mb-3">Текст или выдержка источника не сохранены.</p>
+                                    }
+
+                                    @if (!string.IsNullOrWhiteSpace(item.WarningOrLimitationNote))
+                                    {
+                                        <div class="alert alert-warning mb-0" role="status">
+                                            @item.WarningOrLimitationNote
+                                        </div>
+                                    }
+                                </article>
+                            }
+                        </div>
+                    }
+                </section>
+            }
+
             @if (aiResult.ImpactMap is null)
             {
                 <div class="alert alert-warning" role="status">
