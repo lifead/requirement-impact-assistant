@@ -348,6 +348,199 @@ public sealed class AnalysisExecutionServiceTests
     }
 
     [Fact]
+    public async Task RunAsync_Mvp1SmokeBaselineExternalRagPathPersistsImpactMapMetadataAndRetrievedContext()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var baseline = Mvp1SmokeBaselineFixture.Create();
+            var options = CreateOptions(databasePath);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(baseline.Analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var openedAnalysis = await dbContext.Analyses
+                    .AsNoTracking()
+                    .Include(candidate => candidate.ContextFragments)
+                    .SingleAsync(candidate => candidate.Id == baseline.Analysis.Id);
+
+                Assert.Equal(AnalysisStatus.ReadyForAnalysis, openedAnalysis.Status);
+                Assert.Equal(
+                    baseline.ManualContextFragments.Select(fragment => fragment.Id),
+                    openedAnalysis.ContextFragments
+                        .OrderBy(fragment => fragment.CreatedAt)
+                        .ThenBy(fragment => fragment.Id)
+                        .Select(fragment => fragment.Id));
+            }
+
+            var provider = new CapturingLlmProvider(new LlmProviderResponse(
+                LlmProviderResponseStatus.Failed,
+                null,
+                "direct path must not be called",
+                ["direct path must not be called"]));
+            var directEngine = new DirectLlmAnalysisEngine(
+                provider,
+                Options.Create(new AiAnalysisOptions
+                {
+                    Provider = LlmProviderNames.Demo
+                }));
+            var adapter = new CapturingFixtureExternalRagAdapter(baseline.ExternalHappyPathResponse);
+            var externalEngine = new ExternalRagAnalysisEngine(adapter);
+            var selector = new ModeAwareAiAnalysisEngineSelector(directEngine, externalEngine);
+            var assembler = new CapturingAssembler();
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(dbContext, assembler, selector);
+
+                var outcome = await service.RunAsync(baseline.Analysis.Id, AnalysisMode.ExternalRag);
+
+                Assert.True(outcome.Succeeded);
+                Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
+            }
+
+            Assert.Equal([AnalysisMode.ExternalRag], selector.SelectedModes);
+            Assert.Equal(0, provider.CallCount);
+            Assert.Equal(1, assembler.CallCount);
+            Assert.NotNull(assembler.LastAnalysis);
+            Assert.Equal(baseline.Analysis.Id, assembler.LastAnalysis.Id);
+            Assert.IsType<CapturingFixtureExternalRagAdapter>(adapter);
+            Assert.Equal(1, adapter.CallCount);
+            Assert.NotNull(adapter.LastRequest);
+            var adapterRequest = adapter.LastRequest;
+            Assert.Equal(baseline.Analysis.Id, adapterRequest.CorrelationId);
+            Assert.Equal(nameof(ExternalRagAnalysisEngine), adapterRequest.ExecutionMetadata.EngineName);
+            Assert.True(adapterRequest.CanForwardManualContextToExternalAiOrRag);
+            Assert.NotNull(adapterRequest.ManualContext);
+            Assert.Equal(
+                baseline.ManualContextFragments.Select(fragment => fragment.Id),
+                adapterRequest.ManualContext.ContextFragments.Select(fragment => fragment.Id));
+            Assert.Equal(
+                baseline.ManualContextFragments.Select(fragment => fragment.Text),
+                adapterRequest.ManualContext.ContextFragments.Select(fragment => fragment.Text));
+            Assert.All(
+                baseline.ManualContextFragments,
+                fragment => Assert.Contains(fragment.Text, adapterRequest.ManualContext.CombinedText, StringComparison.Ordinal));
+            Assert.All(
+                baseline.ExternalHappyPathResponse.RetrievedContextItems,
+                retrievedItem =>
+                {
+                    Assert.DoesNotContain(retrievedItem.ExternalReference!, adapterRequest.ManualContext.CombinedText, StringComparison.Ordinal);
+                    Assert.DoesNotContain(retrievedItem.FragmentId!, adapterRequest.ManualContext.CombinedText, StringComparison.Ordinal);
+                    Assert.DoesNotContain(retrievedItem.Text!, adapterRequest.ManualContext.CombinedText, StringComparison.Ordinal);
+                });
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var saved = await dbContext.Analyses
+                    .AsSplitQuery()
+                    .Include(candidate => candidate.ContextFragments)
+                    .Include(candidate => candidate.AiAnalysisResult)
+                    .ThenInclude(result => result!.Metadata.RetrievedContextItems)
+                    .SingleAsync(candidate => candidate.Id == baseline.Analysis.Id);
+
+                Assert.Equal(AnalysisStatus.NeedsExpertEvaluation, saved.Status);
+                Assert.NotNull(saved.AiAnalysisResult);
+                var savedResult = saved.AiAnalysisResult;
+                var expectedModelWorkflowProfileName = CreateExternalModelWorkflowProfileName(
+                    baseline.ExternalHappyPathResponse.Metadata);
+                Assert.Equal(AiAnalysisResultStatus.Completed, savedResult.Status);
+                Assert.Empty(savedResult.ErrorMessage);
+                Assert.Equal(baseline.ExternalHappyPathResponse.SanitizedDiagnosticSnapshot, savedResult.RawResponse);
+                Assert.Equal(nameof(ExternalRagAnalysisEngine), savedResult.EngineName);
+                Assert.Equal(baseline.ExternalHappyPathResponse.Metadata.ProviderName, savedResult.ProviderName);
+                Assert.Equal(expectedModelWorkflowProfileName, savedResult.ModelName);
+                Assert.DoesNotContain("Dify", savedResult.RawResponse, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("DeepSeek", savedResult.RawResponse, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("Authorization", savedResult.RawResponse, StringComparison.OrdinalIgnoreCase);
+                Assert.DoesNotContain("Bearer", savedResult.RawResponse, StringComparison.OrdinalIgnoreCase);
+                using (var diagnosticDocument = JsonDocument.Parse(savedResult.RawResponse))
+                {
+                    Assert.Equal(
+                        baseline.ExternalHappyPathResponse.Metadata.SanitizedProperties["network"],
+                        diagnosticDocument.RootElement.GetProperty("network").GetString());
+                }
+                Assert.Equal(baseline.AnalysisRequest.InputSnapshotJson, savedResult.InputSnapshot);
+                Assert.NotNull(savedResult.ImpactMap);
+                Assert.Equal(
+                    JsonSerializer.Serialize(baseline.ExpectedImpactMap, StableJsonOptions),
+                    JsonSerializer.Serialize(savedResult.ImpactMap, StableJsonOptions));
+
+                var metadata = savedResult.Metadata;
+                Assert.Equal(AnalysisMode.ExternalRag, metadata.AnalysisMode);
+                Assert.Equal(nameof(ExternalRagAnalysisEngine), metadata.EngineName);
+                Assert.Equal(baseline.ExternalHappyPathResponse.Metadata.ProviderName, metadata.ProviderName);
+                Assert.Equal(baseline.ExternalHappyPathResponse.Metadata.AdapterName, metadata.AdapterName);
+                Assert.Equal(expectedModelWorkflowProfileName, metadata.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.Available, metadata.RetrievedContextState);
+                Assert.True(metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Empty(metadata.Warnings);
+                Assert.Equal(
+                    baseline.ExternalHappyPathResponse.RetrievedContextItems.Count,
+                    metadata.RetrievedContextItems.Count);
+
+                Assert.Equal(
+                    baseline.ExternalHappyPathResponse.RetrievedContextItems
+                        .OrderBy(item => item.Rank)
+                        .Select(item => new
+                        {
+                            item.SourceTitle,
+                            item.SourceId,
+                            item.ExternalReference,
+                            item.FragmentId,
+                            item.Text,
+                            item.Excerpt,
+                            item.UrlOrReference,
+                            item.Rank,
+                            item.Score,
+                            item.ProviderName,
+                            item.AdapterName,
+                            item.Completeness
+                        }),
+                    metadata.RetrievedContextItems
+                        .OrderBy(item => item.Rank)
+                        .Select(item => new
+                        {
+                            item.SourceTitle,
+                            item.SourceId,
+                            item.ExternalReference,
+                            item.FragmentId,
+                            item.Text,
+                            item.Excerpt,
+                            item.UrlOrReference,
+                            item.Rank,
+                            item.Score,
+                            item.ProviderName,
+                            item.AdapterName,
+                            item.Completeness
+                        }));
+            }
+
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM RetrievedContextItems;";
+
+                var retrievedContextItemCount = (long)(await command.ExecuteScalarAsync() ?? 0L);
+                Assert.Equal(baseline.ExternalHappyPathResponse.RetrievedContextItems.Count, retrievedContextItemCount);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task RunAsync_PersistsEngineProvidedMetadataAndRetrievedContextItems()
     {
         var databasePath = CreateDatabasePath();
@@ -1568,6 +1761,16 @@ public sealed class AnalysisExecutionServiceTests
     private static string CreateMockModelWorkflowProfileName(string? mockProfileName) =>
         $"local-demo-model / mock-impact-analysis / {CreateMockProfileName(mockProfileName)}";
 
+    private static string CreateExternalModelWorkflowProfileName(ExternalRagAdapterResponseMetadata metadata) =>
+        string.Join(
+            " / ",
+            new[]
+            {
+                metadata.ModelName,
+                metadata.WorkflowName,
+                metadata.ProfileName
+            }.Where(value => !string.IsNullOrWhiteSpace(value)));
+
     private static void AssertMockScenarioPersistence(
         AiAnalysisResultMetadata metadata,
         string? mockProfileName,
@@ -1835,6 +2038,23 @@ public sealed class AnalysisExecutionServiceTests
                 : await request.Content.ReadAsStringAsync(cancellationToken);
 
             return responseFactory(request);
+        }
+    }
+
+    private sealed class CapturingFixtureExternalRagAdapter(ExternalRagAdapterResponse response) : IExternalRagAdapter
+    {
+        public int CallCount { get; private set; }
+
+        public ExternalRagAdapterRequest? LastRequest { get; private set; }
+
+        public Task<ExternalRagAdapterResponse> AnalyzeAsync(
+            ExternalRagAdapterRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            CallCount++;
+            LastRequest = request;
+
+            return Task.FromResult(response);
         }
     }
 
