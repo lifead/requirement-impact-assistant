@@ -18,6 +18,13 @@ namespace RequirementImpactAssistant.Tests.Application;
 
 public sealed class AnalysisMarkdownExportServiceTests
 {
+    public enum SavedResultReproducibilityCase
+    {
+        DirectLlm,
+        ExternalRag,
+        LegacyWithoutMvp1Metadata
+    }
+
     [Fact]
     public async Task ExportAsync_BuildsSnapshotStyleMarkdownReportFromSavedAnalysis()
     {
@@ -46,6 +53,59 @@ public sealed class AnalysisMarkdownExportServiceTests
                 Assert.EndsWith(".md", result.FileName, StringComparison.Ordinal);
                 Assert.Contains("payment-api-change-", result.FileName, StringComparison.Ordinal);
                 AssertMarkdownContainsSnapshotSections(result.Markdown, analysis.ContextFragments.Single().Id);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Theory]
+    [InlineData(SavedResultReproducibilityCase.DirectLlm)]
+    [InlineData(SavedResultReproducibilityCase.ExternalRag)]
+    [InlineData(SavedResultReproducibilityCase.LegacyWithoutMvp1Metadata)]
+    public async Task ExportAsync_ExportsSavedResultReproducibilityMatrixFromStoredGraph(
+        SavedResultReproducibilityCase testCase)
+    {
+        var databasePath = CreateDatabasePath();
+        var exportedAt = new DateTimeOffset(2026, 06, 14, 09, 10, 11, TimeSpan.Zero);
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var baseline = Mvp1SmokeBaselineFixture.Create();
+            var analysis = testCase switch
+            {
+                SavedResultReproducibilityCase.DirectLlm => Mvp1SmokeBaselineFixture.CreateSavedDirectLlmAnalysis(),
+                SavedResultReproducibilityCase.ExternalRag => Mvp1SmokeBaselineFixture.CreateSavedExternalRagAnalysis(),
+                SavedResultReproducibilityCase.LegacyWithoutMvp1Metadata => CreateAnalysisGraph(includeStage1Metadata: false),
+                _ => throw new ArgumentOutOfRangeException(nameof(testCase), testCase, "Unsupported export matrix case.")
+            };
+
+            await SaveAnalysisAsync(options, analysis);
+
+            await using var dbContext = new ApplicationDbContext(options);
+            var service = new AnalysisMarkdownExportService(dbContext);
+
+            var result = await service.ExportAsync(analysis.Id, exportedAt);
+
+            Assert.Equal(AnalysisMarkdownExportResultKind.Exported, result.Kind);
+            AssertMarkdownContainsCommonReproducibilityFields(result.Markdown, exportedAt);
+
+            switch (testCase)
+            {
+                case SavedResultReproducibilityCase.DirectLlm:
+                    AssertMarkdownContainsSavedDirectLlmReproducibilityFields(result.Markdown, baseline);
+                    break;
+                case SavedResultReproducibilityCase.ExternalRag:
+                    AssertMarkdownContainsSavedExternalRagReproducibilityFields(result.Markdown, baseline);
+                    break;
+                case SavedResultReproducibilityCase.LegacyWithoutMvp1Metadata:
+                    AssertMarkdownContainsLegacyReproducibilityFields(result.Markdown, analysis);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(testCase), testCase, "Unsupported export matrix case.");
             }
         }
         finally
@@ -741,6 +801,77 @@ public sealed class AnalysisMarkdownExportServiceTests
         Assert.Contains("- **Fixed at:** 2026-06-13 12:30:00 UTC", markdown);
         Assert.Contains("## Decision boundary", markdown);
         Assert.Contains("does not make a management decision", markdown);
+    }
+
+    private static void AssertMarkdownContainsCommonReproducibilityFields(
+        string markdown,
+        DateTimeOffset exportedAt)
+    {
+        Assert.Contains("## Export metadata", markdown);
+        Assert.Contains($"- **Exported at:** {exportedAt:yyyy-MM-dd HH:mm:ss} UTC", markdown);
+        Assert.Contains("## Analysis result metadata", markdown);
+        Assert.Contains("## Retrieved context", markdown);
+        Assert.Contains("## Structured impact map", markdown);
+        Assert.Contains("## Expert evaluation", markdown);
+        Assert.Contains("## Expert conclusion", markdown);
+        Assert.Contains("## Decision boundary", markdown);
+        Assert.Contains("does not make a management decision", markdown);
+    }
+
+    private static void AssertMarkdownContainsSavedDirectLlmReproducibilityFields(
+        string markdown,
+        Mvp1SmokeBaseline baseline)
+    {
+        Assert.Contains($"# {baseline.Analysis.Title}", markdown);
+        Assert.Contains($"- **Analysis mode:** {AnalysisMode.DirectLlm}", markdown);
+        Assert.Contains($"- **Engine:** {Mvp1SmokeBaselineFixture.DirectLlmEngineName}", markdown);
+        Assert.Contains($"- **Provider:** {Mvp1SmokeBaselineFixture.DirectLlmProviderName}", markdown);
+        Assert.Contains("- **Adapter:** Not provided", markdown);
+        Assert.Contains(
+            $"- **Model workflow profile:** {Mvp1SmokeBaselineFixture.DirectLlmModelWorkflowProfileName}",
+            markdown);
+        Assert.Contains("- **Manual context forwarded to external AI or RAG:** False", markdown);
+        Assert.Contains($"- **Retrieved context state:** {RetrievedContextState.Unavailable}", markdown);
+        Assert.Contains("Retrieved context is unavailable for this saved analysis result.", markdown);
+        Assert.Contains("No retrieved context items were saved.", markdown);
+        Assert.DoesNotContain("### Retrieved context item 1:", markdown);
+    }
+
+    private static void AssertMarkdownContainsSavedExternalRagReproducibilityFields(
+        string markdown,
+        Mvp1SmokeBaseline baseline)
+    {
+        var response = baseline.ExternalHappyPathResponse;
+
+        Assert.Contains($"# {baseline.Analysis.Title}", markdown);
+        Assert.Contains($"- **Analysis mode:** {AnalysisMode.ExternalRag}", markdown);
+        Assert.Contains($"- **Engine:** {baseline.ExternalHappyPathRequest.ExecutionMetadata.EngineName}", markdown);
+        Assert.Contains($"- **Provider:** {response.Metadata.ProviderName}", markdown);
+        Assert.Contains($"- **Adapter:** {response.Metadata.AdapterName}", markdown);
+        Assert.Contains("- **Model workflow profile:** local-demo-model / mock-impact-analysis / happy-path", markdown);
+        Assert.Contains("- **Manual context forwarded to external AI or RAG:** True", markdown);
+        Assert.Contains($"- **Retrieved context state:** {response.RetrievedContextState}", markdown);
+        Assert.Contains("Retrieved context was saved for this analysis result.", markdown);
+        Assert.Contains($"### Retrieved context item 1: {response.RetrievedContextItems[0].SourceTitle}", markdown);
+        Assert.Equal(response.RetrievedContextItems.Count, CountRetrievedContextItemHeadings(markdown));
+    }
+
+    private static void AssertMarkdownContainsLegacyReproducibilityFields(string markdown, Analysis analysis)
+    {
+        Assert.Contains("# Payment API change", markdown);
+        Assert.Contains("- **Analysis mode:** DirectLlm", markdown);
+        Assert.Contains($"- **Engine:** {analysis.AiAnalysisResult!.EngineName}", markdown);
+        Assert.Contains($"- **Provider:** {analysis.AiAnalysisResult.ProviderName}", markdown);
+        Assert.Contains("- **Adapter:** Not provided", markdown);
+        Assert.Contains($"- **Model workflow profile:** {analysis.AiAnalysisResult.ModelName}", markdown);
+        Assert.Contains("- **Manual context forwarded to external AI or RAG:** False", markdown);
+        Assert.Contains("- **Retrieved context state:** Unavailable", markdown);
+        Assert.Contains("No warnings were saved.", markdown);
+        Assert.Contains("No retrieved context items were saved.", markdown);
+        Assert.DoesNotContain("### Retrieved context item 1:", markdown);
+        Assert.Contains("- **Context sufficiency:** PartiallySufficient", markdown);
+        Assert.Contains("- **Result usefulness:** Useful", markdown);
+        Assert.Contains("- **Conclusion:** AcceptWithLimitations", markdown);
     }
 
     private static string CreateDatabasePath() =>

@@ -20,6 +20,13 @@ namespace RequirementImpactAssistant.Tests.Application;
 
 public sealed class AnalysisJsonExportServiceTests
 {
+    public enum SavedResultReproducibilityCase
+    {
+        DirectLlm,
+        ExternalRag,
+        LegacyWithoutMvp1Metadata
+    }
+
     [Fact]
     public async Task ExportAsync_BuildsJsonWithStableTopLevelFields()
     {
@@ -108,6 +115,63 @@ public sealed class AnalysisJsonExportServiceTests
                 Assert.Single(retrievedContext.GetProperty("limitations").EnumerateArray()).GetString());
             Assert.Empty(retrievedContext.GetProperty("warnings").EnumerateArray());
             Assert.False(aiAnalysisResult.TryGetProperty("items", out _));
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Theory]
+    [InlineData(SavedResultReproducibilityCase.DirectLlm)]
+    [InlineData(SavedResultReproducibilityCase.ExternalRag)]
+    [InlineData(SavedResultReproducibilityCase.LegacyWithoutMvp1Metadata)]
+    public async Task ExportAsync_ExportsSavedResultReproducibilityMatrixFromStoredGraph(
+        SavedResultReproducibilityCase testCase)
+    {
+        var databasePath = CreateDatabasePath();
+        var exportedAt = new DateTimeOffset(2026, 06, 14, 09, 10, 11, TimeSpan.Zero);
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var baseline = Mvp1SmokeBaselineFixture.Create();
+            var analysis = testCase switch
+            {
+                SavedResultReproducibilityCase.DirectLlm => Mvp1SmokeBaselineFixture.CreateSavedDirectLlmAnalysis(),
+                SavedResultReproducibilityCase.ExternalRag => Mvp1SmokeBaselineFixture.CreateSavedExternalRagAnalysis(),
+                SavedResultReproducibilityCase.LegacyWithoutMvp1Metadata => CreateAnalysisGraph(),
+                _ => throw new ArgumentOutOfRangeException(nameof(testCase), testCase, "Unsupported export matrix case.")
+            };
+
+            await SaveAnalysisAsync(options, analysis);
+
+            await using var dbContext = new ApplicationDbContext(options);
+            var service = new AnalysisJsonExportService(dbContext);
+
+            var result = await service.ExportAsync(analysis.Id, exportedAt);
+
+            Assert.Equal(AnalysisJsonExportResultKind.Exported, result.Kind);
+
+            using var document = JsonDocument.Parse(result.Json);
+            var root = document.RootElement;
+
+            AssertJsonContainsCommonReproducibilityFields(root, exportedAt);
+
+            switch (testCase)
+            {
+                case SavedResultReproducibilityCase.DirectLlm:
+                    AssertJsonContainsSavedDirectLlmReproducibilityFields(root, baseline);
+                    break;
+                case SavedResultReproducibilityCase.ExternalRag:
+                    AssertJsonContainsSavedExternalRagReproducibilityFields(root, baseline);
+                    break;
+                case SavedResultReproducibilityCase.LegacyWithoutMvp1Metadata:
+                    AssertJsonContainsLegacyReproducibilityFields(root, analysis);
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException(nameof(testCase), testCase, "Unsupported export matrix case.");
+            }
         }
         finally
         {
@@ -1007,6 +1071,131 @@ public sealed class AnalysisJsonExportServiceTests
         {
             DeleteDatabase(databasePath);
         }
+    }
+
+    private static void AssertJsonContainsCommonReproducibilityFields(
+        JsonElement root,
+        DateTimeOffset exportedAt)
+    {
+        Assert.Equal(
+            "ExpertConclusionFixed",
+            root.GetProperty("metadata").GetProperty("status").GetString());
+        Assert.Equal(
+            "requirement-impact-assistant.analysis-export",
+            root.GetProperty("exportMetadata").GetProperty("format").GetString());
+        Assert.Equal(
+            exportedAt,
+            root.GetProperty("exportMetadata").GetProperty("exportedAt").GetDateTimeOffset());
+        Assert.Contains(
+            "does not make a management decision",
+            root.GetProperty("exportMetadata")
+                .GetProperty("boundaryNotice")
+                .GetProperty("statement")
+                .GetString(),
+            StringComparison.Ordinal);
+
+        Assert.True(root.TryGetProperty("aiAnalysisResult", out _));
+        Assert.True(root.TryGetProperty("impactMap", out _));
+        Assert.True(root.TryGetProperty("expertEvaluation", out _));
+        Assert.True(root.TryGetProperty("expertConclusion", out _));
+    }
+
+    private static void AssertJsonContainsSavedDirectLlmReproducibilityFields(
+        JsonElement root,
+        Mvp1SmokeBaseline baseline)
+    {
+        var aiAnalysisResult = root.GetProperty("aiAnalysisResult");
+        var retrievedContext = aiAnalysisResult.GetProperty("retrievedContext");
+
+        Assert.Equal(baseline.Analysis.Title, root.GetProperty("metadata").GetProperty("title").GetString());
+        Assert.Equal(AnalysisMode.DirectLlm.ToString(), aiAnalysisResult.GetProperty("analysisMode").GetString());
+        Assert.Equal(
+            Mvp1SmokeBaselineFixture.DirectLlmEngineName,
+            aiAnalysisResult.GetProperty("analysisEngine").GetProperty("name").GetString());
+        Assert.Equal(
+            Mvp1SmokeBaselineFixture.DirectLlmProviderName,
+            aiAnalysisResult.GetProperty("provider").GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, aiAnalysisResult.GetProperty("adapter").GetProperty("name").ValueKind);
+        Assert.Equal(
+            Mvp1SmokeBaselineFixture.DirectLlmModelWorkflowProfileName,
+            aiAnalysisResult.GetProperty("modelWorkflowProfile").GetProperty("name").GetString());
+        Assert.False(
+            aiAnalysisResult.GetProperty("manualContextUsage").GetProperty("forwardedToExternalAiOrRag").GetBoolean());
+        Assert.Equal(RetrievedContextState.Unavailable.ToString(), aiAnalysisResult.GetProperty("retrievedContextState").GetString());
+        Assert.Equal(RetrievedContextState.Unavailable.ToString(), retrievedContext.GetProperty("state").GetString());
+        Assert.Empty(retrievedContext.GetProperty("items").EnumerateArray());
+        Assert.Equal(
+            "Retrieved context is unavailable for this saved analysis result.",
+            Assert.Single(retrievedContext.GetProperty("limitations").EnumerateArray()).GetString());
+    }
+
+    private static void AssertJsonContainsSavedExternalRagReproducibilityFields(
+        JsonElement root,
+        Mvp1SmokeBaseline baseline)
+    {
+        var response = baseline.ExternalHappyPathResponse;
+        var aiAnalysisResult = root.GetProperty("aiAnalysisResult");
+        var retrievedContext = aiAnalysisResult.GetProperty("retrievedContext");
+
+        Assert.Equal(baseline.Analysis.Title, root.GetProperty("metadata").GetProperty("title").GetString());
+        Assert.Equal(AnalysisMode.ExternalRag.ToString(), aiAnalysisResult.GetProperty("analysisMode").GetString());
+        Assert.Equal(
+            baseline.ExternalHappyPathRequest.ExecutionMetadata.EngineName,
+            aiAnalysisResult.GetProperty("analysisEngine").GetProperty("name").GetString());
+        Assert.Equal(
+            response.Metadata.ProviderName,
+            aiAnalysisResult.GetProperty("provider").GetProperty("name").GetString());
+        Assert.Equal(
+            response.Metadata.AdapterName,
+            aiAnalysisResult.GetProperty("adapter").GetProperty("name").GetString());
+        Assert.Equal(
+            "local-demo-model / mock-impact-analysis / happy-path",
+            aiAnalysisResult.GetProperty("modelWorkflowProfile").GetProperty("name").GetString());
+        Assert.True(
+            aiAnalysisResult.GetProperty("manualContextUsage").GetProperty("forwardedToExternalAiOrRag").GetBoolean());
+        Assert.Equal(response.RetrievedContextState.ToString(), aiAnalysisResult.GetProperty("retrievedContextState").GetString());
+        Assert.Equal(response.RetrievedContextState.ToString(), retrievedContext.GetProperty("state").GetString());
+        Assert.Empty(retrievedContext.GetProperty("limitations").EnumerateArray());
+
+        var items = retrievedContext.GetProperty("items").EnumerateArray().ToArray();
+        Assert.Equal(response.RetrievedContextItems.Count, items.Length);
+        Assert.Equal(response.RetrievedContextItems[0].SourceTitle, items[0].GetProperty("sourceTitle").GetString());
+        Assert.Equal(response.RetrievedContextItems[0].Text, items[0].GetProperty("text").GetString());
+    }
+
+    private static void AssertJsonContainsLegacyReproducibilityFields(JsonElement root, Analysis analysis)
+    {
+        var aiAnalysisResult = root.GetProperty("aiAnalysisResult");
+        var retrievedContext = aiAnalysisResult.GetProperty("retrievedContext");
+
+        Assert.Equal("Payment API change", root.GetProperty("metadata").GetProperty("title").GetString());
+        Assert.Equal("DirectLlm", aiAnalysisResult.GetProperty("analysisMode").GetString());
+        Assert.Equal(
+            analysis.AiAnalysisResult!.EngineName,
+            aiAnalysisResult.GetProperty("analysisEngine").GetProperty("name").GetString());
+        Assert.Equal(
+            analysis.AiAnalysisResult.ProviderName,
+            aiAnalysisResult.GetProperty("provider").GetProperty("name").GetString());
+        Assert.Equal(JsonValueKind.Null, aiAnalysisResult.GetProperty("adapter").GetProperty("name").ValueKind);
+        Assert.Equal(
+            analysis.AiAnalysisResult.ModelName,
+            aiAnalysisResult.GetProperty("modelWorkflowProfile").GetProperty("name").GetString());
+        Assert.False(
+            aiAnalysisResult.GetProperty("manualContextUsage").GetProperty("forwardedToExternalAiOrRag").GetBoolean());
+        Assert.Equal("Unavailable", aiAnalysisResult.GetProperty("retrievedContextState").GetString());
+        Assert.Empty(aiAnalysisResult.GetProperty("warnings").EnumerateArray());
+        Assert.Equal("Unavailable", retrievedContext.GetProperty("state").GetString());
+        Assert.Empty(retrievedContext.GetProperty("items").EnumerateArray());
+        Assert.Equal(
+            "Retrieved context is unavailable for this saved analysis result.",
+            Assert.Single(retrievedContext.GetProperty("limitations").EnumerateArray()).GetString());
+
+        var expertEvaluation = root.GetProperty("expertEvaluation");
+        Assert.Equal("PartiallySufficient", expertEvaluation.GetProperty("contextSufficiency").GetString());
+        Assert.Equal("Useful", expertEvaluation.GetProperty("resultUsefulness").GetString());
+
+        var expertConclusion = root.GetProperty("expertConclusion");
+        Assert.Equal("AcceptWithLimitations", expertConclusion.GetProperty("conclusionType").GetString());
     }
 
     private static JsonElement BuildRetrievedContext(Analysis analysis)

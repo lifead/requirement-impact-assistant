@@ -16,32 +16,36 @@ public sealed class ExportArchitectureTests
         .Where(type => IsExportNamespace(type.Namespace))
         .ToArray();
 
+    private static readonly Type[] ForbiddenExportExternalDependencyTypes =
+    [
+        typeof(IAnalysisExecutionService),
+        typeof(AnalysisExecutionService),
+        typeof(IAiAnalysisEngine),
+        typeof(IAiAnalysisEngineSelector),
+        typeof(AiAnalysisOptions),
+        typeof(IExternalRagAdapter),
+        typeof(MockExternalRagAdapter),
+        typeof(DifyExternalRagAdapter),
+        typeof(DifyExternalRagOptions),
+        typeof(DifyExternalRagConfigurationStatus),
+        typeof(ExternalRagAnalysisEngine),
+        typeof(ILlmProvider),
+        typeof(DirectLlmAnalysisEngine),
+        typeof(DemoLlmProvider),
+        typeof(DeepSeekLlmProvider),
+        typeof(HttpClient),
+        typeof(HttpMessageHandler),
+        typeof(HttpRequestMessage),
+        typeof(HttpResponseMessage)
+    ];
+
     [Fact]
     public void ExportTypes_DoNotDependOnAnalysisEnginesLlmProvidersOrNetworkClients()
     {
-        var forbiddenTypes = new[]
-        {
-            typeof(IAiAnalysisEngine),
-            typeof(IAiAnalysisEngineSelector),
-            typeof(IExternalRagAdapter),
-            typeof(MockExternalRagAdapter),
-            typeof(DifyExternalRagAdapter),
-            typeof(DifyExternalRagOptions),
-            typeof(DifyExternalRagConfigurationStatus),
-            typeof(ExternalRagAnalysisEngine),
-            typeof(ILlmProvider),
-            typeof(DirectLlmAnalysisEngine),
-            typeof(DemoLlmProvider),
-            typeof(DeepSeekLlmProvider),
-            typeof(HttpClient),
-            typeof(HttpMessageHandler),
-            typeof(HttpRequestMessage),
-            typeof(HttpResponseMessage)
-        };
-
         var violations = ExportTypes
             .SelectMany(type => GetReferencedTypes(type)
-                .Where(referencedType => forbiddenTypes.Any(forbiddenType => forbiddenType.IsAssignableFrom(referencedType)))
+                .Where(referencedType => ForbiddenExportExternalDependencyTypes.Any(
+                    forbiddenType => forbiddenType.IsAssignableFrom(referencedType)))
                 .Select(referencedType => $"{type.FullName} -> {referencedType.FullName}"))
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -92,6 +96,29 @@ public sealed class ExportArchitectureTests
             .SelectMany(file => forbiddenTokens
                 .Where(token => File.ReadAllText(file).Contains(token, StringComparison.Ordinal))
                 .Select(token => $"{Path.GetRelativePath(exportDirectory, file)} contains {token}"))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Empty(violations);
+    }
+
+    [Fact]
+    public void ExportServiceConstructors_DoNotDependOnAiEnginesProvidersAdaptersOrNetworkClients()
+    {
+        var exportServiceTypes = new[]
+        {
+            typeof(AnalysisMarkdownExportService),
+            typeof(AnalysisJsonExportService)
+        };
+
+        var violations = exportServiceTypes
+            .SelectMany(type => type.GetConstructors()
+                .SelectMany(constructor => constructor.GetParameters()
+                    .SelectMany(parameter => ExpandType(parameter.ParameterType)
+                        .Where(parameterType => ForbiddenExportExternalDependencyTypes.Any(
+                            forbiddenType => forbiddenType.IsAssignableFrom(parameterType)))
+                        .Select(parameterType =>
+                            $"{type.FullName} constructor parameter {parameter.Name} references {parameterType.FullName}"))))
             .Order(StringComparer.Ordinal)
             .ToArray();
 
