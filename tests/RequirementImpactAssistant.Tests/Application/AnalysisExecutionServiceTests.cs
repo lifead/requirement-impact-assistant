@@ -15,11 +15,15 @@ using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
 using RequirementImpactAssistant.Web.Extensions;
+using RequirementImpactAssistant.Tests.Support;
 
 namespace RequirementImpactAssistant.Tests.Application;
 
 public sealed class AnalysisExecutionServiceTests
 {
+    private static readonly JsonSerializerOptions StableJsonOptions =
+        new(JsonSerializerDefaults.Web);
+
     [Fact]
     public async Task RunAsync_ExecutesEngineThroughAssemblerAndPersistsCompletedResult()
     {
@@ -152,6 +156,177 @@ public sealed class AnalysisExecutionServiceTests
                 Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
                 Assert.False(metadata.ManualContextForwardedToExternalAiOrRag);
                 Assert.Equal([warning], metadata.Warnings);
+                Assert.Empty(metadata.RetrievedContextItems);
+            }
+
+            await using (var connection = new SqliteConnection($"Data Source={databasePath}"))
+            {
+                await connection.OpenAsync();
+
+                await using var command = connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM RetrievedContextItems;";
+
+                var retrievedContextItemCount = (long)(await command.ExecuteScalarAsync() ?? 0L);
+                Assert.Equal(0L, retrievedContextItemCount);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunAsync_Mvp1SmokeBaselineDirectLlmPathPersistsImpactMapAndNeutralMetadata(
+        bool explicitDirectLlmMode)
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var baseline = Mvp1SmokeBaselineFixture.Create();
+            var options = CreateOptions(databasePath);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(baseline.Analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var openedAnalysis = await dbContext.Analyses
+                    .AsNoTracking()
+                    .Include(candidate => candidate.ContextFragments)
+                    .SingleAsync(candidate => candidate.Id == baseline.Analysis.Id);
+
+                Assert.Equal(AnalysisStatus.ReadyForAnalysis, openedAnalysis.Status);
+                Assert.Equal(
+                    baseline.ManualContextFragments.Select(fragment => fragment.Id),
+                    openedAnalysis.ContextFragments
+                        .OrderBy(fragment => fragment.CreatedAt)
+                        .ThenBy(fragment => fragment.Id)
+                        .Select(fragment => fragment.Id));
+            }
+
+            var provider = new CapturingLlmProvider(new LlmProviderResponse(
+                LlmProviderResponseStatus.Succeeded,
+                baseline.ExpectedImpactMap,
+                "local direct LLM smoke response",
+                []));
+            var directEngine = new DirectLlmAnalysisEngine(
+                provider,
+                Options.Create(new AiAnalysisOptions
+                {
+                    Provider = LlmProviderNames.Demo
+                }));
+            var externalEngine = new StubAiAnalysisEngine(new AiAnalysisResponse(
+                AiAnalysisResponseStatus.Failed,
+                null,
+                "external path must not be called",
+                ["external path must not be called"],
+                AnalysisBoundaryNotice.Default));
+            var selector = new ModeAwareAiAnalysisEngineSelector(directEngine, externalEngine);
+            var assembler = new CapturingAssembler();
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = CreateService(dbContext, assembler, selector);
+
+                var outcome = explicitDirectLlmMode
+                    ? await service.RunAsync(baseline.Analysis.Id, AnalysisMode.DirectLlm)
+                    : await service.RunAsync(baseline.Analysis.Id);
+
+                Assert.True(outcome.Succeeded);
+                Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
+            }
+
+            Assert.Equal([AnalysisMode.DirectLlm], selector.SelectedModes);
+            Assert.Equal(1, assembler.CallCount);
+            Assert.NotNull(assembler.LastAnalysis);
+            Assert.Equal(baseline.Analysis.Id, assembler.LastAnalysis.Id);
+            Assert.Equal(
+                baseline.ManualContextFragments.Select(fragment => fragment.Id),
+                assembler.LastAnalysis.ContextFragments
+                    .OrderBy(fragment => fragment.CreatedAt)
+                    .ThenBy(fragment => fragment.Id)
+                    .Select(fragment => fragment.Id));
+            Assert.Equal(1, provider.CallCount);
+            Assert.NotNull(provider.LastRequest);
+            Assert.Equal(LlmProviderNames.Demo, provider.LastRequest.Provider);
+            Assert.Equal(baseline.AnalysisRequest.InputSnapshotJson, provider.LastRequest.AnalysisRequest.InputSnapshotJson);
+            Assert.All(
+                baseline.ManualContextFragments,
+                fragment => Assert.Contains(fragment.Text, provider.LastRequest.Prompt, StringComparison.Ordinal));
+            Assert.Equal(0, externalEngine.CallCount);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var saved = await dbContext.Analyses
+                    .AsSplitQuery()
+                    .Include(candidate => candidate.ContextFragments)
+                    .Include(candidate => candidate.AiAnalysisResult)
+                    .ThenInclude(result => result!.Metadata.RetrievedContextItems)
+                    .SingleAsync(candidate => candidate.Id == baseline.Analysis.Id);
+
+                Assert.Equal(AnalysisStatus.NeedsExpertEvaluation, saved.Status);
+                Assert.Equal(baseline.ManualContextFragments.Count, saved.ContextFragments.Count);
+                Assert.Equal(
+                    baseline.ManualContextFragments
+                        .OrderBy(fragment => fragment.CreatedAt)
+                        .ThenBy(fragment => fragment.Id)
+                        .Select(fragment => new
+                        {
+                            fragment.Id,
+                            fragment.AnalysisId,
+                            fragment.Type,
+                            fragment.Source,
+                            fragment.Text,
+                            fragment.FileName,
+                            fragment.FilePath,
+                            fragment.CreatedAt
+                        }),
+                    saved.ContextFragments
+                        .OrderBy(fragment => fragment.CreatedAt)
+                        .ThenBy(fragment => fragment.Id)
+                        .Select(fragment => new
+                        {
+                            fragment.Id,
+                            fragment.AnalysisId,
+                            fragment.Type,
+                            fragment.Source,
+                            fragment.Text,
+                            fragment.FileName,
+                            fragment.FilePath,
+                            fragment.CreatedAt
+                        }));
+                Assert.NotNull(saved.AiAnalysisResult);
+                var savedResult = saved.AiAnalysisResult;
+                Assert.Equal(AiAnalysisResultStatus.Completed, savedResult.Status);
+                Assert.Equal("local direct LLM smoke response", savedResult.RawResponse);
+                Assert.Empty(savedResult.ErrorMessage);
+                Assert.Equal(nameof(DirectLlmAnalysisEngine), savedResult.EngineName);
+                Assert.Equal(LlmProviderNames.Demo, savedResult.ProviderName);
+                Assert.Equal("demo-deterministic", savedResult.ModelName);
+                Assert.Equal("direct-llm-analysis-v1", savedResult.PromptVersion);
+                Assert.Equal(baseline.AnalysisRequest.InputSnapshotJson, savedResult.InputSnapshot);
+                Assert.NotNull(savedResult.ImpactMap);
+                Assert.Equal(
+                    JsonSerializer.Serialize(baseline.ExpectedImpactMap, StableJsonOptions),
+                    JsonSerializer.Serialize(savedResult.ImpactMap, StableJsonOptions));
+
+                var metadata = savedResult.Metadata;
+                Assert.Equal(AnalysisMode.DirectLlm, metadata.AnalysisMode);
+                Assert.Equal(nameof(DirectLlmAnalysisEngine), metadata.EngineName);
+                Assert.Equal(LlmProviderNames.Demo, metadata.ProviderName);
+                Assert.Null(metadata.AdapterName);
+                Assert.Equal("demo-deterministic", metadata.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
+                Assert.False(metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Empty(metadata.Warnings);
                 Assert.Empty(metadata.RetrievedContextItems);
             }
 
