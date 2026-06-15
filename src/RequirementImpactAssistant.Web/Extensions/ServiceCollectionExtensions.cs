@@ -34,6 +34,18 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    public static async Task ApplyApplicationPersistenceMigrationsAsync(
+        this IServiceProvider serviceProvider,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(serviceProvider);
+
+        using var scope = serviceProvider.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        await dbContext.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public static IServiceCollection AddApplicationAnalysis(
         this IServiceCollection services,
         IConfiguration configuration)

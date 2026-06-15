@@ -10,6 +10,8 @@ builder.Services.AddApplicationExport();
 
 var app = builder.Build();
 
+await app.Services.ApplyApplicationPersistenceMigrationsAsync();
+
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())
 {

@@ -1,3 +1,4 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -208,6 +209,59 @@ public sealed class ApplicationConfigurationTests
     }
 
     [Fact]
+    public async Task ApplyApplicationPersistenceMigrations_CreatesMissingSqliteDatabaseWithCurrentSchema()
+    {
+        var contentRootPath = CreateTempDirectory();
+        var databasePath = Path.Combine(contentRootPath, "App_Data", "application.db");
+
+        try
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:ApplicationDb"] = "Data Source=App_Data/application.db"
+                })
+                .Build();
+
+            var services = new ServiceCollection();
+            services.AddApplicationPersistence(configuration, contentRootPath);
+
+            using var serviceProvider = services.BuildServiceProvider();
+
+            Assert.False(File.Exists(databasePath));
+
+            await serviceProvider.ApplyApplicationPersistenceMigrationsAsync();
+
+            Assert.True(File.Exists(databasePath));
+
+            await using var connection = new SqliteConnection($"Data Source={databasePath}");
+            await connection.OpenAsync();
+
+            var tableNames = await ReadTableNamesAsync(connection);
+
+            Assert.Contains("__EFMigrationsHistory", tableNames);
+            Assert.Contains("Analyses", tableNames);
+            Assert.Contains("AiAnalysisResults", tableNames);
+            Assert.Contains("RetrievedContextItems", tableNames);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM Analyses";
+
+            var analysisCount = Assert.IsType<long>(await command.ExecuteScalarAsync());
+            Assert.Equal(0L, analysisCount);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+
+            if (Directory.Exists(contentRootPath))
+            {
+                Directory.Delete(contentRootPath, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public void PersistenceRegistration_FailsWhenConnectionStringIsMissing()
     {
         var configuration = new ConfigurationBuilder().Build();
@@ -285,5 +339,31 @@ public sealed class ApplicationConfigurationTests
             "..",
             "src",
             "RequirementImpactAssistant.Web"));
+    }
+
+    private static string CreateTempDirectory()
+    {
+        var directoryPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+
+        Directory.CreateDirectory(directoryPath);
+
+        return directoryPath;
+    }
+
+    private static async Task<HashSet<string>> ReadTableNamesAsync(SqliteConnection connection)
+    {
+        var tableNames = new HashSet<string>(StringComparer.Ordinal);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table'";
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            tableNames.Add(reader.GetString(0));
+        }
+
+        return tableNames;
     }
 }
