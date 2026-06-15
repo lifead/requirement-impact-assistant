@@ -1,3 +1,4 @@
+using System.Text.Json;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.External;
 using RequirementImpactAssistant.Web.Domain;
@@ -8,6 +9,10 @@ namespace RequirementImpactAssistant.Tests.Application;
 
 public sealed class ExternalRagAnalysisEngineTests
 {
+    private const string FakeSecretLikeToken = "sk-test-external-rag-secret";
+    private const string FakeAuthorizationHeader = "Authorization: Bearer";
+    private const string FakeSecretEndpoint = "https://external-rag-secret.invalid";
+
     [Fact]
     public async Task AnalyzeAsync_WithoutAdapterReturnsControlledUnavailableFailure()
     {
@@ -160,7 +165,9 @@ public sealed class ExternalRagAnalysisEngineTests
         var error = Assert.Single(response.Errors);
         Assert.Contains("External adapter failed before returning an analytical result.", error);
         Assert.Contains(nameof(InvalidOperationException), error);
-        Assert.DoesNotContain("sensitive diagnostic", error, StringComparison.OrdinalIgnoreCase);
+        AssertSanitized(
+            response,
+            [FakeSecretLikeToken, FakeAuthorizationHeader, FakeSecretEndpoint, "sensitive diagnostic"]);
 
         Assert.NotNull(response.ResultMetadata);
         Assert.Equal(AnalysisMode.ExternalRag, response.ResultMetadata.AnalysisMode);
@@ -223,6 +230,46 @@ public sealed class ExternalRagAnalysisEngineTests
             }
         };
 
+    private static void AssertSanitized(
+        AiAnalysisResponse response,
+        IReadOnlyList<string> forbiddenTokens)
+    {
+        var serializedResponse = JsonSerializer.Serialize(response);
+        var inspectedStrings = new List<string?>
+        {
+            serializedResponse,
+            response.RawResponse,
+            response.ResultMetadata?.ProviderName,
+            response.ResultMetadata?.AdapterName,
+            response.ResultMetadata?.ModelWorkflowProfileName
+        };
+
+        inspectedStrings.AddRange(response.Errors);
+        if (response.ResultMetadata is not null)
+        {
+            inspectedStrings.AddRange(response.ResultMetadata.Warnings);
+            inspectedStrings.AddRange(response.ResultMetadata.RetrievedContextItems.SelectMany(item => new[]
+            {
+                item.SourceTitle,
+                item.SourceId,
+                item.ExternalReference,
+                item.FragmentId,
+                item.Text,
+                item.Excerpt,
+                item.UrlOrReference,
+                item.ProviderName,
+                item.AdapterName,
+                item.WarningOrLimitationNote
+            }));
+        }
+
+        foreach (var forbiddenToken in forbiddenTokens)
+        {
+            Assert.All(inspectedStrings, value =>
+                Assert.DoesNotContain(forbiddenToken, value ?? string.Empty, StringComparison.Ordinal));
+        }
+    }
+
     private sealed class CapturingExternalRagAdapter(ExternalRagAdapterResponse response) : IExternalRagAdapter
     {
         public int CallCount { get; private set; }
@@ -246,7 +293,8 @@ public sealed class ExternalRagAnalysisEngineTests
             ExternalRagAdapterRequest request,
             CancellationToken cancellationToken = default)
         {
-            throw new InvalidOperationException("sensitive diagnostic should not be surfaced");
+            throw new InvalidOperationException(
+                $"sensitive diagnostic should not be surfaced: {FakeAuthorizationHeader} {FakeSecretLikeToken} {FakeSecretEndpoint}");
         }
     }
 }

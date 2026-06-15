@@ -13,6 +13,8 @@ namespace RequirementImpactAssistant.Tests.Application;
 public sealed class DifyExternalRagAdapterTests
 {
     private const string TestApiKey = "test-dify-api-key";
+    private const string FakeProviderSecret = "sk-test-dify-provider-secret";
+    private const string FakeSecretEndpoint = "https://dify-secret.invalid";
 
     [Fact]
     public async Task AnalyzeAsync_SendsDifyRequestThroughFakeHttpAndMapsHappyPathResponse()
@@ -374,6 +376,65 @@ public sealed class DifyExternalRagAdapterTests
     }
 
     [Fact]
+    public async Task AnalyzeAsync_WhenProviderReportsErrorStatusWithSecretLikePayload_ReturnsSanitizedProviderError()
+    {
+        var handler = new CapturingHandler(_ => CreateJsonResponse(HttpStatusCode.OK, $$"""
+            {
+              "workflow_run_id": "run-1",
+              "task_id": "task-1",
+              "data": {
+                "workflow_id": "workflow-{{FakeProviderSecret}}",
+                "status": "error",
+                "outputs": {
+                  "warnings": [
+                    "Authorization: Bearer {{FakeProviderSecret}} {{FakeSecretEndpoint}}"
+                  ],
+                  "impact_map": {
+                    "change_summary": {
+                      "title": "Gateway migration"
+                    },
+                    "preliminary_assessment": {
+                      "title": "Requires expert review"
+                    }
+                  },
+                  "retrieved_context": [
+                    {
+                      "source_title": "Secret-like payload source",
+                      "text": "Provider body contains {{FakeProviderSecret}} but failure diagnostics must not echo it."
+                    }
+                  ]
+                }
+              }
+            }
+            """));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        AssertFailure(
+            response,
+            expectedCode: "dify_provider_error",
+            forbiddenTokens:
+            [
+                TestApiKey,
+                FakeProviderSecret,
+                FakeSecretEndpoint,
+                "Authorization",
+                "Bearer",
+                "workflow-" + FakeProviderSecret
+            ]);
+        Assert.Equal("error", response.Metadata.SanitizedProperties["providerStatus"]);
+        Assert.Null(response.ImpactMap);
+        Assert.NotNull(response.SanitizedDiagnosticSnapshot);
+        using var diagnosticDocument = JsonDocument.Parse(response.SanitizedDiagnosticSnapshot);
+        var diagnosticRoot = diagnosticDocument.RootElement;
+        Assert.Equal("failed", diagnosticRoot.GetProperty("status").GetString());
+        Assert.Equal("error", diagnosticRoot.GetProperty("providerStatus").GetString());
+        Assert.Equal(RetrievedContextState.Unavailable.ToString(), diagnosticRoot.GetProperty("retrievedContextState").GetString());
+        Assert.Equal(0, diagnosticRoot.GetProperty("retrievedContextItemCount").GetInt32());
+    }
+
+    [Fact]
     public async Task AnalyzeAsync_WhenProviderStatusContainsSensitiveText_SanitizesStatusInMetadataAndDiagnostics()
     {
         const string maliciousProviderStatus =
@@ -596,9 +657,47 @@ public sealed class DifyExternalRagAdapterTests
         IReadOnlyList<string> forbiddenTokens)
     {
         var serializedResponse = JsonSerializer.Serialize(response);
+        var inspectedStrings = new List<string?>
+        {
+            serializedResponse,
+            response.SanitizedDiagnosticSnapshot,
+            response.Metadata.ProviderName,
+            response.Metadata.AdapterName,
+            response.Metadata.ModelName,
+            response.Metadata.WorkflowName,
+            response.Metadata.ProfileName
+        };
+
+        inspectedStrings.AddRange(response.Warnings);
+        inspectedStrings.AddRange(response.Errors.SelectMany(error => new[]
+        {
+            error.Code,
+            error.Message,
+            error.DiagnosticDetails
+        }));
+        inspectedStrings.AddRange(response.Metadata.SanitizedProperties.SelectMany(property => new[]
+        {
+            property.Key,
+            property.Value
+        }));
+        inspectedStrings.AddRange(response.RetrievedContextItems.SelectMany(item => new[]
+        {
+            item.SourceTitle,
+            item.SourceId,
+            item.ExternalReference,
+            item.FragmentId,
+            item.Text,
+            item.Excerpt,
+            item.UrlOrReference,
+            item.ProviderName,
+            item.AdapterName,
+            item.WarningOrLimitationNote
+        }));
+
         foreach (var forbiddenToken in forbiddenTokens)
         {
-            Assert.DoesNotContain(forbiddenToken, serializedResponse, StringComparison.Ordinal);
+            Assert.All(inspectedStrings, value =>
+                Assert.DoesNotContain(forbiddenToken, value ?? string.Empty, StringComparison.Ordinal));
         }
     }
 
