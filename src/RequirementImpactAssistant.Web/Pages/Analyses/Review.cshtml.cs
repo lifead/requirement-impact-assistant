@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.EntityFrameworkCore;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
+using AnalysisModeEnum = RequirementImpactAssistant.Web.Domain.Enums.AnalysisMode;
 
 namespace RequirementImpactAssistant.Web.Pages.Analyses;
 
@@ -13,6 +15,9 @@ public sealed class ReviewModel(
     IAnalysisExecutionService? analysisExecutionService = null) : PageModel
 {
     public AnalysisReview? Analysis { get; private set; }
+
+    [BindProperty]
+    public RunAnalysisInput Input { get; set; } = new();
 
     [TempData]
     public string? AnalysisRunMessage { get; set; }
@@ -28,13 +33,23 @@ public sealed class ReviewModel(
 
     public async Task<IActionResult> OnPostRunAnalysisAsync(Guid id)
     {
+        var analysisMode = Input.GetAnalysisMode(ModelState);
+        if (!ModelState.IsValid)
+        {
+            Analysis = await LoadReviewAsync(id);
+
+            return Analysis is null
+                ? NotFound()
+                : Page();
+        }
+
         if (analysisExecutionService is null)
         {
             throw new InvalidOperationException("Сервис выполнения анализа не настроен.");
         }
 
         var cancellationToken = PageContext?.HttpContext?.RequestAborted ?? CancellationToken.None;
-        var outcome = await analysisExecutionService.RunAsync(id, cancellationToken);
+        var outcome = await analysisExecutionService.RunAsync(id, analysisMode, cancellationToken);
 
         if (outcome.Kind == AnalysisExecutionOutcomeKind.NotFound)
         {
@@ -119,4 +134,33 @@ public sealed class ReviewModel(
         string Text,
         string? FileName,
         DateTimeOffset CreatedAt);
+
+    public sealed class RunAnalysisInput
+    {
+        public string? AnalysisMode { get; set; }
+
+        public AnalysisModeEnum GetAnalysisMode(ModelStateDictionary modelState)
+        {
+            if (string.IsNullOrWhiteSpace(AnalysisMode))
+            {
+                return AnalysisModeEnum.DirectLlm;
+            }
+
+            return AnalysisMode.Trim() switch
+            {
+                nameof(AnalysisModeEnum.DirectLlm) => AnalysisModeEnum.DirectLlm,
+                nameof(AnalysisModeEnum.ExternalRag) => AnalysisModeEnum.ExternalRag,
+                _ => AddInvalidAnalysisModeError(modelState)
+            };
+        }
+
+        private static AnalysisModeEnum AddInvalidAnalysisModeError(ModelStateDictionary modelState)
+        {
+            modelState.AddModelError(
+                $"{nameof(Input)}.{nameof(AnalysisMode)}",
+                "Analysis mode is invalid.");
+
+            return AnalysisModeEnum.DirectLlm;
+        }
+    }
 }

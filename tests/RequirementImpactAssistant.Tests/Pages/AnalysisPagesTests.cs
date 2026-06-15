@@ -426,10 +426,149 @@ public sealed class AnalysisPagesTests
                 var redirect = Assert.IsType<RedirectToPageResult>(result);
 
                 Assert.Equal(analysis.Id, service.LastAnalysisId);
+                Assert.Equal(AnalysisMode.DirectLlm, service.LastAnalysisMode);
                 Assert.Equal(1, service.CallCount);
                 Assert.Equal("/Analyses/Details", redirect.PageName);
                 Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
                 Assert.Equal("Предварительный AI-анализ завершен.", pageModel.AnalysisRunMessage);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ReviewPage_RunAnalysisHandlerPassesExternalRagModeToApplicationService()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.ReadyForAnalysis,
+                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = new CapturingAnalysisExecutionService(new AnalysisExecutionOutcome(
+                    AnalysisExecutionOutcomeKind.Completed,
+                    analysis.Id,
+                    AiAnalysisResultStatus.Completed,
+                    "Analysis completed."));
+                var pageModel = new ReviewModel(dbContext, service)
+                {
+                    Input = new ReviewModel.RunAnalysisInput
+                    {
+                        AnalysisMode = nameof(AnalysisMode.ExternalRag)
+                    }
+                };
+
+                var result = await pageModel.OnPostRunAnalysisAsync(analysis.Id);
+
+                Assert.IsType<RedirectToPageResult>(result);
+                Assert.Equal(analysis.Id, service.LastAnalysisId);
+                Assert.Equal(AnalysisMode.ExternalRag, service.LastAnalysisMode);
+                Assert.Equal(1, service.CallCount);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1")]
+    [InlineData("Unknown")]
+    public async Task ReviewPage_RunAnalysisHandlerRejectsInvalidAnalysisModeBeforeCallingService(
+        string analysisMode)
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.ReadyForAnalysis,
+                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = new CapturingAnalysisExecutionService(new AnalysisExecutionOutcome(
+                    AnalysisExecutionOutcomeKind.Completed,
+                    analysis.Id,
+                    AiAnalysisResultStatus.Completed,
+                    "Analysis completed."));
+                var pageModel = new ReviewModel(dbContext, service)
+                {
+                    Input = new ReviewModel.RunAnalysisInput
+                    {
+                        AnalysisMode = analysisMode
+                    }
+                };
+
+                var result = await pageModel.OnPostRunAnalysisAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.Equal(0, service.CallCount);
+                Assert.NotNull(pageModel.Analysis);
+                Assert.False(pageModel.ModelState.IsValid);
+                Assert.Contains(
+                    pageModel.ModelState["Input.AnalysisMode"]!.Errors,
+                    error => error.ErrorMessage.Contains("Analysis mode", StringComparison.Ordinal));
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ReviewPage_RunAnalysisHandlerReturnsNotFoundWhenServiceReportsNotFound()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var missingAnalysisId = Guid.NewGuid();
+                var service = new CapturingAnalysisExecutionService(new AnalysisExecutionOutcome(
+                    AnalysisExecutionOutcomeKind.NotFound,
+                    missingAnalysisId,
+                    ResultStatus: null,
+                    Message: "Analysis not found."));
+                var pageModel = new ReviewModel(dbContext, service);
+
+                var result = await pageModel.OnPostRunAnalysisAsync(missingAnalysisId);
+
+                Assert.IsType<NotFoundResult>(result);
+                Assert.Equal(missingAnalysisId, service.LastAnalysisId);
+                Assert.Equal(AnalysisMode.DirectLlm, service.LastAnalysisMode);
+                Assert.Equal(1, service.CallCount);
             }
         }
         finally
@@ -2534,6 +2673,8 @@ public sealed class AnalysisPagesTests
 
         public Guid LastAnalysisId { get; private set; }
 
+        public AnalysisMode LastAnalysisMode { get; private set; } = AnalysisMode.DirectLlm;
+
         public Task<AnalysisExecutionOutcome> RunAsync(
             Guid analysisId,
             CancellationToken cancellationToken = default)
@@ -2548,6 +2689,7 @@ public sealed class AnalysisPagesTests
         {
             CallCount++;
             LastAnalysisId = analysisId;
+            LastAnalysisMode = analysisMode;
 
             return Task.FromResult(outcome);
         }
