@@ -52,7 +52,22 @@ public static class ServiceCollectionExtensions
             .Bind(configuration.GetSection(DifyExternalRagOptions.SectionName));
 
         services.AddScoped<DirectLlmAnalysisEngine>();
-        services.TryAddScoped<IExternalRagAdapter, MockExternalRagAdapter>();
+
+        var difyOptions = configuration
+            .GetSection(DifyExternalRagOptions.SectionName)
+            .Get<DifyExternalRagOptions>() ?? new DifyExternalRagOptions();
+
+        if (difyOptions.IsConfigured)
+        {
+            services.AddHttpClient<DifyExternalRagAdapter>();
+            services.AddScoped<IExternalRagAdapter>(serviceProvider =>
+                serviceProvider.GetRequiredService<DifyExternalRagAdapter>());
+        }
+        else
+        {
+            services.TryAddScoped<IExternalRagAdapter, MockExternalRagAdapter>();
+        }
+
         services.AddScoped<ExternalRagAnalysisEngine>(serviceProvider =>
             new ExternalRagAnalysisEngine(serviceProvider.GetService<IExternalRagAdapter>()));
         services.AddScoped<IAiAnalysisEngine>(serviceProvider =>

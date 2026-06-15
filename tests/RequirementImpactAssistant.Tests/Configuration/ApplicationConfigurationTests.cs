@@ -4,6 +4,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.External;
+using RequirementImpactAssistant.Web.Application.Analysis.External.Dify;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Domain;
@@ -14,6 +15,8 @@ namespace RequirementImpactAssistant.Tests.Configuration;
 
 public sealed class ApplicationConfigurationTests
 {
+    private const string NonSecretConfigurationValue = "provided-by-test-configuration";
+
     [Fact]
     public void Configuration_LoadsDevelopmentSqliteConnectionString()
     {
@@ -94,6 +97,37 @@ public sealed class ApplicationConfigurationTests
     }
 
     [Fact]
+    public void ApplicationAnalysisRegistration_ConfiguredDifyKeepsDirectLlmDefault()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiAnalysis:Provider"] = LlmProviderNames.Demo,
+                ["ExternalRag:Dify:Enabled"] = "true",
+                ["ExternalRag:Dify:Endpoint"] = new UriBuilder(Uri.UriSchemeHttps, "dify.invalid").Uri.ToString(),
+                ["ExternalRag:Dify:WorkflowOrAppId"] = "workflow-placeholder",
+                ["ExternalRag:Dify:ApiKey"] = NonSecretConfigurationValue
+            })
+            .Build();
+        var services = new ServiceCollection();
+        services.AddSingleton<ILlmProvider, NoopLlmProvider>();
+
+        services.AddApplicationAnalysis(configuration);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+
+        var engine = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngine>();
+        var selector = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngineSelector>();
+        var externalAdapter = scope.ServiceProvider.GetRequiredService<IExternalRagAdapter>();
+
+        Assert.IsType<DirectLlmAnalysisEngine>(engine);
+        Assert.Same(engine, selector.Select(AnalysisMode.DirectLlm));
+        Assert.IsType<ExternalRagAnalysisEngine>(selector.Select(AnalysisMode.ExternalRag));
+        Assert.IsType<DifyExternalRagAdapter>(externalAdapter);
+    }
+
+    [Fact]
     public async Task ApplicationAnalysisRegistration_WiresMockAdapterForExternalRagMode()
     {
         var configuration = CreateApplicationConfiguration();
@@ -128,7 +162,7 @@ public sealed class ApplicationConfigurationTests
                 ["AiAnalysis:Provider"] = LlmProviderNames.DeepSeek,
                 ["AiAnalysis:DeepSeek:Model"] = "deepseek-chat",
                 ["AiAnalysis:DeepSeek:BaseUrl"] = "https://api.deepseek.com",
-                ["AiAnalysis:DeepSeek:ApiKey"] = "test-api-key"
+                ["AiAnalysis:DeepSeek:ApiKey"] = NonSecretConfigurationValue
             })
             .Build();
         var services = new ServiceCollection();

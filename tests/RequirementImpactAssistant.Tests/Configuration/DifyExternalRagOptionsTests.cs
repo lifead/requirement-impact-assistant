@@ -91,7 +91,7 @@ public sealed class DifyExternalRagOptionsTests
     }
 
     [Fact]
-    public void ApplicationAnalysisRegistration_BindsDifyOptionsWithoutSwitchingExternalAdapter()
+    public void ApplicationAnalysisRegistration_ConfiguredDifySwitchesExternalAdapter()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -118,6 +118,33 @@ public sealed class DifyExternalRagOptionsTests
         Assert.True(options.IsConfigured);
         Assert.Equal("workflow-placeholder", options.WorkflowOrAppId);
         Assert.Equal("integration-test-profile", options.ProfileName);
+        Assert.IsType<DifyExternalRagAdapter>(externalAdapter);
+    }
+
+    [Fact]
+    public void ApplicationAnalysisRegistration_PartialDifyConfigurationKeepsMockExternalAdapter()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiAnalysis:Provider"] = LlmProviderNames.Demo,
+                ["ExternalRag:Dify:Enabled"] = "true",
+                ["ExternalRag:Dify:Endpoint"] = new UriBuilder(Uri.UriSchemeHttps, "dify.invalid").Uri.ToString(),
+                ["ExternalRag:Dify:WorkflowOrAppId"] = "workflow-placeholder"
+            })
+            .Build();
+        var services = new ServiceCollection();
+
+        services.AddApplicationAnalysis(configuration);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+
+        var options = scope.ServiceProvider.GetRequiredService<IOptions<DifyExternalRagOptions>>().Value;
+        var externalAdapter = scope.ServiceProvider.GetRequiredService<IExternalRagAdapter>();
+
+        Assert.True(options.Enabled);
+        Assert.False(options.IsConfigured);
         Assert.IsType<MockExternalRagAdapter>(externalAdapter);
     }
 
