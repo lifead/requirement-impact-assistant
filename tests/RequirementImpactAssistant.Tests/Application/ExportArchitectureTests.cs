@@ -1,6 +1,7 @@
 using System.Reflection;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.External;
+using RequirementImpactAssistant.Web.Application.Analysis.External.Dify;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Application.Export;
 
@@ -24,6 +25,9 @@ public sealed class ExportArchitectureTests
             typeof(IAiAnalysisEngineSelector),
             typeof(IExternalRagAdapter),
             typeof(MockExternalRagAdapter),
+            typeof(DifyExternalRagAdapter),
+            typeof(DifyExternalRagOptions),
+            typeof(DifyExternalRagConfigurationStatus),
             typeof(ExternalRagAnalysisEngine),
             typeof(ILlmProvider),
             typeof(DirectLlmAnalysisEngine),
