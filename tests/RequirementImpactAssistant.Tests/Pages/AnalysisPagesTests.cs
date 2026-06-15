@@ -281,6 +281,24 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
+    public void ReviewPage_SourceRendersAnalysisModeSelectionControls()
+    {
+        var source = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Review.cshtml");
+
+        Assert.Contains("name=\"Input.AnalysisMode\"", source, StringComparison.Ordinal);
+        Assert.Contains("value=\"@nameof(AnalysisMode.DirectLlm)\"", source, StringComparison.Ordinal);
+        Assert.Contains("value=\"@nameof(AnalysisMode.ExternalRag)\"", source, StringComparison.Ordinal);
+        Assert.Contains("? nameof(AnalysisMode.DirectLlm)", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "checked=\"@(selectedAnalysisMode == nameof(AnalysisMode.DirectLlm))\"",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains("External AI/RAG", source, StringComparison.Ordinal);
+        Assert.Contains("может передавать данные во внешний AI/RAG-контур", source, StringComparison.Ordinal);
+        Assert.Contains("может быть ограничен или недоступен", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ReviewPage_LoadsOnlyCurrentAnalysisContext()
     {
         var databasePath = CreateDatabasePath();
@@ -2420,6 +2438,23 @@ public sealed class AnalysisPagesTests
         Path.Combine(
             Path.GetTempPath(),
             $"requirement-impact-assistant-content-{Guid.NewGuid():N}");
+
+    private static string ReadProjectFile(string relativePath) =>
+        File.ReadAllText(Path.Combine(FindRepositoryRoot(), relativePath));
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null &&
+               !File.Exists(Path.Combine(directory.FullName, "RequirementImpactAssistant.sln")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName
+            ?? throw new DirectoryNotFoundException("Repository root was not found.");
+    }
 
     private static DbContextOptions<ApplicationDbContext> CreateOptions(string databasePath) =>
         new DbContextOptionsBuilder<ApplicationDbContext>()
