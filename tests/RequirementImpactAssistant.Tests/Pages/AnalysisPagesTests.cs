@@ -1116,7 +1116,7 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
-    public async Task DetailsPage_RemovesStoredUploadFileWhenDatabaseSaveFails()
+    public async Task DetailsPage_ReturnsPageAndRemovesStoredUploadFileWhenDatabaseSaveFails()
     {
         var databasePath = CreateDatabasePath();
         var contentRootPath = CreateContentRootPath();
@@ -1136,6 +1136,8 @@ public sealed class AnalysisPagesTests
                 await dbContext.SaveChangesAsync();
             }
 
+            AddContextFragmentInsertFailureTrigger(databasePath);
+
             await using (var dbContext = new ApplicationDbContext(options))
             {
                 var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
@@ -1143,18 +1145,30 @@ public sealed class AnalysisPagesTests
                     UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
                     {
                         Type = ContextFragmentType.Task,
-                        File = new CallbackFormFile(
-                            "context.md",
-                            "Uploaded context text.",
-                            () => DropContextFragmentsTable(databasePath))
+                        File = CreateUploadFile("context.md", "Uploaded context text.")
                     }
                 };
 
-                await Assert.ThrowsAsync<DbUpdateException>(
-                    () => pageModel.OnPostUploadContextFragmentAsync(analysis.Id));
+                var result = await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.False(pageModel.ModelState.IsValid);
+                Assert.True(pageModel.ModelState.TryGetValue("UploadContextFragmentInput.File", out var fileState));
+                var error = Assert.Single(fileState.Errors);
+                Assert.Equal("Не удалось загрузить файл. Проверьте файл и повторите попытку.", error.ErrorMessage);
+                Assert.NotNull(pageModel.Analysis);
+                Assert.Equal(analysis.Id, pageModel.Analysis.Id);
+                Assert.Empty(pageModel.Analysis.ContextFragments);
 
                 var uploadsRoot = Path.Combine(contentRootPath, "data", "uploads");
                 Assert.False(Directory.Exists(uploadsRoot) && Directory.EnumerateFiles(uploadsRoot, "*", SearchOption.AllDirectories).Any());
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                Assert.Empty(await dbContext.ContextFragments
+                    .Where(candidate => candidate.AnalysisId == analysis.Id)
+                    .ToListAsync());
             }
         }
         finally
@@ -3097,7 +3111,7 @@ public sealed class AnalysisPagesTests
         return new FormFile(stream, 0, bytes.Length, "UploadContextFragmentInput.File", fileName);
     }
 
-    private static void DropContextFragmentsTable(string databasePath)
+    private static void AddContextFragmentInsertFailureTrigger(string databasePath)
     {
         SqliteConnection.ClearAllPools();
 
@@ -3105,7 +3119,13 @@ public sealed class AnalysisPagesTests
         connection.Open();
 
         using var command = connection.CreateCommand();
-        command.CommandText = "DROP TABLE ContextFragments";
+        command.CommandText = """
+            CREATE TRIGGER RejectContextFragmentInsert
+            BEFORE INSERT ON ContextFragments
+            BEGIN
+                SELECT RAISE(ABORT, 'Simulated context fragment insert failure');
+            END;
+            """;
         command.ExecuteNonQuery();
     }
 
@@ -3171,34 +3191,4 @@ public sealed class AnalysisPagesTests
         }
     }
 
-    private sealed class CallbackFormFile(string fileName, string content, Action afterCopy) : IFormFile
-    {
-        private readonly byte[] bytes = System.Text.Encoding.UTF8.GetBytes(content);
-
-        public string ContentType => "text/markdown";
-
-        public string ContentDisposition => string.Empty;
-
-        public IHeaderDictionary Headers { get; set; } = new HeaderDictionary();
-
-        public long Length => bytes.Length;
-
-        public string Name => "UploadContextFragmentInput.File";
-
-        public string FileName => fileName;
-
-        public void CopyTo(Stream target)
-        {
-            target.Write(bytes);
-            afterCopy();
-        }
-
-        public async Task CopyToAsync(Stream target, CancellationToken cancellationToken = default)
-        {
-            await target.WriteAsync(bytes, cancellationToken);
-            afterCopy();
-        }
-
-        public Stream OpenReadStream() => new MemoryStream(bytes);
-    }
 }

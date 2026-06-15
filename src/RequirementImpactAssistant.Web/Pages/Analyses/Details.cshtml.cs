@@ -21,6 +21,8 @@ public sealed class DetailsModel(
     IAnalysisJsonExportService? jsonExportService = null) : PageModel
 {
     private const long MaxUploadFileSizeBytes = 1_048_576;
+    private const string UploadContextFragmentFailureMessage =
+        "Не удалось загрузить файл. Проверьте файл и повторите попытку.";
 
     private static readonly HashSet<string> AllowedUploadExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -159,10 +161,15 @@ public sealed class DetailsModel(
 
             await dbContext.SaveChangesAsync();
         }
-        catch
+        catch (Exception exception) when (IsExpectedUploadOrPersistenceFailure(exception))
         {
             DeleteStoredFileBestEffort(relativePath, analysis.Id);
-            throw;
+            dbContext.ChangeTracker.Clear();
+            ModelState.AddModelError(
+                $"{nameof(UploadContextFragmentInput)}.{nameof(FileContextFragmentInput.File)}",
+                UploadContextFragmentFailureMessage);
+            Analysis = await LoadAnalysisDetailsAsync(id);
+            return Page();
         }
 
         return RedirectToPage("/Analyses/Details", new { id = analysis.Id });
@@ -508,6 +515,9 @@ public sealed class DetailsModel(
             // Preserve the original upload or database failure for the caller.
         }
     }
+
+    private static bool IsExpectedUploadOrPersistenceFailure(Exception exception) =>
+        exception is IOException or UnauthorizedAccessException or DbUpdateException;
 
     private static string EnsureTrailingDirectorySeparator(string path) =>
         path.EndsWith(Path.DirectorySeparatorChar)
