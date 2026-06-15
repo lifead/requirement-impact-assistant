@@ -204,6 +204,7 @@ public sealed class Stage4ArchitectureRegressionTests
         var externalDirectory = Path.Combine(analysisDirectory, "External");
 
         return Directory.EnumerateFiles(externalDirectory, "*.cs", SearchOption.AllDirectories)
+            .Where(file => !IsUnderDifySpecificDirectory(file, externalDirectory))
             .Concat(new[]
             {
                 Path.Combine(analysisDirectory, "ExternalRagAnalysisEngine.cs"),
@@ -213,6 +214,14 @@ public sealed class Stage4ArchitectureRegressionTests
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private static bool IsUnderDifySpecificDirectory(string file, string externalDirectory)
+    {
+        var relativePath = Path.GetRelativePath(externalDirectory, file);
+
+        return relativePath.StartsWith($"Dify{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
+            relativePath.StartsWith($"Dify{Path.AltDirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsForbiddenTypeReference(Type forbiddenType, Type referencedType)

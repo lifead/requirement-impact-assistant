@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.External;
+using RequirementImpactAssistant.Web.Application.Analysis.External.Dify;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Application.Export;
 using RequirementImpactAssistant.Web.Data;
@@ -45,6 +46,10 @@ public static class ServiceCollectionExtensions
                 options => !string.Equals(options.Provider, LlmProviderNames.DeepSeek, StringComparison.OrdinalIgnoreCase)
                     || !string.IsNullOrWhiteSpace(options.DeepSeek.Model),
                 "DeepSeek model is required when DeepSeek provider is selected.");
+
+        services
+            .AddOptions<DifyExternalRagOptions>()
+            .Bind(configuration.GetSection(DifyExternalRagOptions.SectionName));
 
         services.AddScoped<DirectLlmAnalysisEngine>();
         services.TryAddScoped<IExternalRagAdapter, MockExternalRagAdapter>();
