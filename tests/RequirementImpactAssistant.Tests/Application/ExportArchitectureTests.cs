@@ -8,9 +8,11 @@ namespace RequirementImpactAssistant.Tests.Application;
 
 public sealed class ExportArchitectureTests
 {
+    private const string ExportNamespace = "RequirementImpactAssistant.Web.Application.Export";
+
     private static readonly Type[] ExportTypes = typeof(AnalysisMarkdownExportService).Assembly
         .GetTypes()
-        .Where(type => type.Namespace == "RequirementImpactAssistant.Web.Application.Export")
+        .Where(type => IsExportNamespace(type.Namespace))
         .ToArray();
 
     [Fact]
@@ -21,6 +23,7 @@ public sealed class ExportArchitectureTests
             typeof(IAiAnalysisEngine),
             typeof(IAiAnalysisEngineSelector),
             typeof(IExternalRagAdapter),
+            typeof(MockExternalRagAdapter),
             typeof(ExternalRagAnalysisEngine),
             typeof(ILlmProvider),
             typeof(DirectLlmAnalysisEngine),
@@ -61,6 +64,7 @@ public sealed class ExportArchitectureTests
             "AiAnalysisEngineSelector",
             "IExternalRagAdapter",
             "ExternalRagAdapter",
+            "MockExternalRagAdapter",
             "ExternalRagAnalysisEngine",
             "ILlmProvider",
             "DirectLlmAnalysisEngine",
@@ -80,15 +84,19 @@ public sealed class ExportArchitectureTests
             "Pinecone"
         };
 
-        var violations = Directory.EnumerateFiles(exportDirectory, "*.cs")
+        var violations = Directory.EnumerateFiles(exportDirectory, "*.cs", SearchOption.AllDirectories)
             .SelectMany(file => forbiddenTokens
                 .Where(token => File.ReadAllText(file).Contains(token, StringComparison.Ordinal))
-                .Select(token => $"{Path.GetFileName(file)} contains {token}"))
+                .Select(token => $"{Path.GetRelativePath(exportDirectory, file)} contains {token}"))
             .Order(StringComparer.Ordinal)
             .ToArray();
 
         Assert.Empty(violations);
     }
+
+    private static bool IsExportNamespace(string? @namespace) =>
+        @namespace == ExportNamespace ||
+        @namespace?.StartsWith(ExportNamespace + ".", StringComparison.Ordinal) == true;
 
     private static IEnumerable<Type> GetReferencedTypes(Type type)
     {
