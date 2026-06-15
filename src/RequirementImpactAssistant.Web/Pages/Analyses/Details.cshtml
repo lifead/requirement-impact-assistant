@@ -141,18 +141,61 @@
                 <dt class="col-sm-3">Сформировано</dt>
                 <dd class="col-sm-9">@(aiResult.GeneratedAt?.ToLocalTime().ToString("g") ?? "Не сформировано")</dd>
 
-                <dt class="col-sm-3">Механизм анализа</dt>
-                <dd class="col-sm-9">@aiResult.EngineName</dd>
-
-                <dt class="col-sm-3">Провайдер</dt>
-                <dd class="col-sm-9">@aiResult.ProviderName</dd>
-
-                <dt class="col-sm-3">Модель</dt>
-                <dd class="col-sm-9">@aiResult.ModelName</dd>
-
                 <dt class="col-sm-3">Версия промпта</dt>
                 <dd class="col-sm-9">@aiResult.PromptVersion</dd>
             </dl>
+
+            <section class="mb-4">
+                <h3 class="h5 mb-3">Метаданные результата</h3>
+
+                <dl class="row">
+                    <dt class="col-sm-3">Режим анализа</dt>
+                    <dd class="col-sm-9">@AnalysisUiText.AnalysisModeLabel(aiResult.Metadata.AnalysisMode)</dd>
+
+                    @if (!string.IsNullOrWhiteSpace(aiResult.Metadata.EngineName))
+                    {
+                        <dt class="col-sm-3">Механизм</dt>
+                        <dd class="col-sm-9">@aiResult.Metadata.EngineName</dd>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(aiResult.Metadata.ProviderName))
+                    {
+                        <dt class="col-sm-3">Провайдер</dt>
+                        <dd class="col-sm-9">@aiResult.Metadata.ProviderName</dd>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(aiResult.Metadata.AdapterName))
+                    {
+                        <dt class="col-sm-3">Адаптер</dt>
+                        <dd class="col-sm-9">@aiResult.Metadata.AdapterName</dd>
+                    }
+
+                    @if (!string.IsNullOrWhiteSpace(aiResult.Metadata.ModelWorkflowProfileName))
+                    {
+                        <dt class="col-sm-3">Профиль</dt>
+                        <dd class="col-sm-9">@aiResult.Metadata.ModelWorkflowProfileName</dd>
+                    }
+
+                    <dt class="col-sm-3">Извлеченный контекст</dt>
+                    <dd class="col-sm-9">@AnalysisUiText.RetrievedContextStateLabel(aiResult.Metadata.RetrievedContextState)</dd>
+
+                    <dt class="col-sm-3">Ручной контекст</dt>
+                    <dd class="col-sm-9">@AnalysisUiText.ManualContextForwardingLabel(aiResult.Metadata.ManualContextForwardedToExternalAiOrRag)</dd>
+                </dl>
+
+                @if (aiResult.Metadata.Warnings.Count > 0)
+                {
+                    <div class="alert alert-warning" role="status">
+                        <h4 class="h6">Предупреждения и ограничения</h4>
+                        <ul class="mb-0">
+                            @foreach (var warning in aiResult.Metadata.Warnings)
+                            {
+                                <li>@warning</li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </section>
 
             @if (aiResult.ImpactMap is null)
             {

@@ -217,17 +217,7 @@ public sealed class DetailsModel(
                     analysis.ExpertConclusion.FixedAt),
             analysis.AiAnalysisResult is null
                 ? null
-                : new AiAnalysisResultDetails(
-                    analysis.AiAnalysisResult.Status,
-                    analysis.AiAnalysisResult.GeneratedAt,
-                    analysis.AiAnalysisResult.EngineName,
-                    analysis.AiAnalysisResult.ProviderName,
-                    analysis.AiAnalysisResult.ModelName,
-                    analysis.AiAnalysisResult.PromptVersion,
-                    analysis.AiAnalysisResult.InputSnapshot,
-                    analysis.AiAnalysisResult.RawResponse,
-                    analysis.AiAnalysisResult.ErrorMessage,
-                    analysis.AiAnalysisResult.ImpactMap),
+                : ToAiAnalysisResultDetails(analysis.AiAnalysisResult),
             analysis.ContextFragments
                 .OrderByDescending(fragment => fragment.CreatedAt)
                 .Select(fragment => new ContextFragmentDetails(
@@ -238,6 +228,32 @@ public sealed class DetailsModel(
                     fragment.FileName,
                     fragment.FilePath,
                     fragment.CreatedAt))
+                .ToList());
+
+    private static AiAnalysisResultDetails ToAiAnalysisResultDetails(AiAnalysisResult result) =>
+        new(
+            result.Status,
+            result.GeneratedAt,
+            result.PromptVersion,
+            result.InputSnapshot,
+            result.RawResponse,
+            result.ErrorMessage,
+            result.ImpactMap,
+            ToAiAnalysisResultMetadataDetails(result.Metadata));
+
+    private static AiAnalysisResultMetadataDetails ToAiAnalysisResultMetadataDetails(
+        AiAnalysisResultMetadata metadata) =>
+        new(
+            metadata.AnalysisMode,
+            metadata.EngineName,
+            metadata.ProviderName,
+            metadata.AdapterName,
+            metadata.ModelWorkflowProfileName,
+            metadata.RetrievedContextState,
+            metadata.ManualContextForwardedToExternalAiOrRag,
+            metadata.Warnings
+                .Where(warning => !string.IsNullOrWhiteSpace(warning))
+                .Select(warning => warning.Trim())
                 .ToList());
 
     private async Task<AnalysisDetails?> LoadAnalysisDetailsAsync(Guid id)
@@ -280,14 +296,12 @@ public sealed class DetailsModel(
     public sealed record AiAnalysisResultDetails(
         AiAnalysisResultStatus Status,
         DateTimeOffset? GeneratedAt,
-        string EngineName,
-        string ProviderName,
-        string ModelName,
         string PromptVersion,
         string InputSnapshot,
         string RawResponse,
         string ErrorMessage,
-        ImpactMap? ImpactMap)
+        ImpactMap? ImpactMap,
+        AiAnalysisResultMetadataDetails Metadata)
     {
         public IReadOnlyList<ImpactMapSectionDetails> ImpactSections =>
             ImpactMap is null
@@ -309,6 +323,16 @@ public sealed class DetailsModel(
                     new("Предварительная оценка", [ImpactMap.PreliminaryAssessment])
                 ];
     }
+
+    public sealed record AiAnalysisResultMetadataDetails(
+        AnalysisMode AnalysisMode,
+        string EngineName,
+        string? ProviderName,
+        string? AdapterName,
+        string? ModelWorkflowProfileName,
+        RetrievedContextState RetrievedContextState,
+        bool ManualContextForwardedToExternalAiOrRag,
+        IReadOnlyList<string> Warnings);
 
     public sealed record ImpactMapSectionDetails(
         string Title,

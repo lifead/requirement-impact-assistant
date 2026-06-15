@@ -1461,6 +1461,165 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
+    public async Task DetailsPage_DirectLlmResultMetadataShowsDirectLlmWithoutRetrievedContextBasis()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.Completed, CreateImpactMap());
+            aiResult.Metadata = AiAnalysisResultMetadata.CreateDefaultDirectLlm(
+                engineName: "direct-llm-engine",
+                providerName: "demo-provider",
+                modelWorkflowProfileName: "demo-profile");
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(AnalysisMode.DirectLlm, metadata.AnalysisMode);
+                Assert.Equal("Direct LLM", AnalysisUiText.AnalysisModeLabel(metadata.AnalysisMode));
+                Assert.Equal("direct-llm-engine", metadata.EngineName);
+                Assert.Equal("demo-provider", metadata.ProviderName);
+                Assert.Equal("demo-profile", metadata.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
+                Assert.Equal(
+                    "Контекст не сохранен",
+                    AnalysisUiText.RetrievedContextStateLabel(metadata.RetrievedContextState));
+                Assert.False(metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Empty(metadata.Warnings);
+            }
+
+            var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+            Assert.DoesNotContain("основан на извлеченном контексте", detailsSource, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_ExternalResultMetadataShowsSavedExternalSummaryAndWarnings()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.CompletedWithWarnings,
+                CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                ProviderName = "neutral-provider",
+                AdapterName = "neutral-adapter",
+                ModelWorkflowProfileName = "impact-profile",
+                RetrievedContextState = RetrievedContextState.Partial,
+                ManualContextForwardedToExternalAiOrRag = true,
+                Warnings =
+                [
+                    "Retrieved context was partial.",
+                    "Manual context forwarding was limited."
+                ]
+            };
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(AnalysisMode.ExternalRag, metadata.AnalysisMode);
+                Assert.Equal("External AI/RAG", AnalysisUiText.AnalysisModeLabel(metadata.AnalysisMode));
+                Assert.Equal("external-analysis-engine", metadata.EngineName);
+                Assert.Equal("neutral-provider", metadata.ProviderName);
+                Assert.Equal("neutral-adapter", metadata.AdapterName);
+                Assert.Equal("impact-profile", metadata.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.Partial, metadata.RetrievedContextState);
+                Assert.Equal(
+                    "Контекст сохранен частично",
+                    AnalysisUiText.RetrievedContextStateLabel(metadata.RetrievedContextState));
+                Assert.True(metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Equal(
+                    "Передавался во внешний контур",
+                    AnalysisUiText.ManualContextForwardingLabel(metadata.ManualContextForwardedToExternalAiOrRag));
+                Assert.Collection(
+                    metadata.Warnings,
+                    warning => Assert.Equal("Retrieved context was partial.", warning),
+                    warning => Assert.Equal("Manual context forwarding was limited.", warning));
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public void DetailsPage_SourceDoesNotContainProviderSpecificUiPayloadFieldsOrRetrievedContextItems()
+    {
+        var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+        var detailsModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml.cs");
+        var combinedSource = detailsSource + detailsModelSource;
+
+        var forbiddenTokens = new[]
+        {
+            "Dify",
+            "DifyExternal",
+            "workflow_run_id",
+            "workflow_id",
+            "task_id",
+            "manual_context",
+            "providerStatus",
+            "responseShape",
+            "SanitizedDiagnosticSnapshot",
+            "SanitizedProperties",
+            "RetrievedContextItems"
+        };
+
+        Assert.All(
+            forbiddenTokens,
+            token => Assert.DoesNotContain(token, combinedSource, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task CreatePage_CreatesAnalysisAndRedirectsToReadOnlyDetails()
     {
         var databasePath = CreateDatabasePath();
