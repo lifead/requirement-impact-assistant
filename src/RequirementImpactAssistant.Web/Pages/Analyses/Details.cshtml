@@ -412,36 +412,6 @@
                 <button type="submit" class="btn btn-primary">Добавить фрагмент</button>
             </div>
         </form>
-
-        <form method="post"
-              enctype="multipart/form-data"
-              asp-page-handler="UploadContextFragment"
-              asp-route-id="@Model.Analysis.Id"
-              class="d-grid gap-3 mb-4">
-            <div class="row g-3">
-                <div class="col-md-4">
-                    <label asp-for="UploadContextFragmentInput.Type" class="form-label">Тип загружаемого файла</label>
-                    <select asp-for="UploadContextFragmentInput.Type"
-                            asp-items="AnalysisUiText.ContextFragmentTypeItems()"
-                            class="form-select"></select>
-                </div>
-                <div class="col-md-8">
-                    <label asp-for="UploadContextFragmentInput.Source" class="form-label">Источник загружаемого файла</label>
-                    <input asp-for="UploadContextFragmentInput.Source" class="form-control" />
-                </div>
-            </div>
-
-            <div>
-                <label asp-for="UploadContextFragmentInput.File" class="form-label">Файл Markdown, TXT или JSON</label>
-                <input asp-for="UploadContextFragmentInput.File" class="form-control" type="file" accept=".md,.txt,.json" />
-                <span asp-validation-for="UploadContextFragmentInput.File" class="text-danger"></span>
-            </div>
-
-            <div>
-                <button type="submit" class="btn btn-outline-primary">Загрузить файл</button>
-            </div>
-        </form>
-
         @if (Model.Analysis.ContextFragments.Count == 0)
         {
             <p class="text-muted mb-0">Фрагментов контекста пока нет.</p>

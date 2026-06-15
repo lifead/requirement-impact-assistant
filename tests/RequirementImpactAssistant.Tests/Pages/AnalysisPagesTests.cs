@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Data.Sqlite;
@@ -133,12 +132,15 @@ public sealed class AnalysisPagesTests
                 "Task tracker",
                 "Earlier task context.",
                 new DateTimeOffset(2024, 01, 01, 10, 00, 00, TimeSpan.Zero)));
-            analysis.ContextFragments.Add(CreateContextFragment(
+            var fileBackedFragment = CreateContextFragment(
                 analysis.Id,
                 ContextFragmentType.ApiDescription,
                 "API notes",
                 "Latest API context.",
-                new DateTimeOffset(2024, 01, 01, 11, 00, 00, TimeSpan.Zero)));
+                new DateTimeOffset(2024, 01, 01, 11, 00, 00, TimeSpan.Zero));
+            fileBackedFragment.FileName = "gateway-api.md";
+            fileBackedFragment.FilePath = $"data/uploads/{analysis.Id}/gateway-api.md";
+            analysis.ContextFragments.Add(fileBackedFragment);
             otherAnalysis.ContextFragments.Add(CreateContextFragment(
                 otherAnalysis.Id,
                 ContextFragmentType.Comment,
@@ -168,6 +170,8 @@ public sealed class AnalysisPagesTests
                         Assert.Equal(ContextFragmentType.ApiDescription, item.Type);
                         Assert.Equal("API notes", item.Source);
                         Assert.Equal("Latest API context.", item.Text);
+                        Assert.Equal("gateway-api.md", item.FileName);
+                        Assert.Equal($"data/uploads/{analysis.Id}/gateway-api.md", item.FilePath);
                     },
                     item =>
                     {
@@ -795,387 +799,26 @@ public sealed class AnalysisPagesTests
         }
     }
 
-    [Theory]
-    [InlineData("context.md")]
-    [InlineData("context.TXT")]
-    [InlineData("context.JsOn")]
-    public async Task DetailsPage_UploadsAllowedContextFileExtensionsCaseInsensitive(string fileName)
-    {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
-
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var analysis = CreateAnalysis(
-                "Gateway migration",
-                AnalysisStatus.ReadyForAnalysis,
-                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = CreateUploadFile(fileName, "Uploaded context text.")
-                    }
-                };
-
-                var result = await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-
-                Assert.IsType<RedirectToPageResult>(result);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var updated = await dbContext.Analyses
-                    .Include(candidate => candidate.ContextFragments)
-                    .SingleAsync(candidate => candidate.Id == analysis.Id);
-                var fragment = Assert.Single(updated.ContextFragments);
-
-                Assert.Equal(fileName, fragment.FileName);
-                Assert.Equal(fileName, fragment.Source);
-                Assert.Equal("Uploaded context text.", fragment.Text);
-                Assert.True(File.Exists(Path.Combine(contentRootPath, fragment.FilePath!)));
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
-    }
-
     [Fact]
-    public async Task DetailsPage_RejectsUnsupportedUploadExtensionWithoutCreatingFragmentOrFile()
+    public void DetailsPage_SourceDoesNotContainContextFileUploadUiOrHandler()
     {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
+        var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+        var detailsModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml.cs");
 
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var originalUpdatedAt = new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero);
-            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.ReadyForAnalysis, originalUpdatedAt);
+        Assert.DoesNotContain("asp-page-handler=\"UploadContextFragment\"", detailsSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("enctype=\"multipart/form-data\"", detailsSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("type=\"file\"", detailsSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("UploadContextFragmentInput", detailsSource, StringComparison.Ordinal);
 
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
+        Assert.DoesNotContain("OnPostUploadContextFragmentAsync", detailsModelSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("UploadContextFragmentInput", detailsModelSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("FileContextFragmentInput", detailsModelSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("IFormFile", detailsModelSource, StringComparison.Ordinal);
 
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = CreateUploadFile("context.pdf", "Unsupported context text.")
-                    }
-                };
-
-                var result = await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-
-                Assert.IsType<PageResult>(result);
-                Assert.False(pageModel.ModelState.IsValid);
-                Assert.NotNull(pageModel.Analysis);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var unchanged = await dbContext.Analyses
-                    .Include(candidate => candidate.ContextFragments)
-                    .SingleAsync(candidate => candidate.Id == analysis.Id);
-
-                Assert.Equal(originalUpdatedAt, unchanged.UpdatedAt);
-                Assert.Empty(unchanged.ContextFragments);
-                Assert.False(Directory.Exists(Path.Combine(contentRootPath, "data", "uploads")));
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
-    }
-
-    [Fact]
-    public async Task DetailsPage_RejectsOversizedUploadWithoutCreatingFragmentOrFile()
-    {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
-
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var originalUpdatedAt = new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero);
-            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.ReadyForAnalysis, originalUpdatedAt);
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = CreateUploadFile("context.md", new byte[1_048_577])
-                    }
-                };
-
-                var result = await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-
-                Assert.IsType<PageResult>(result);
-                Assert.False(pageModel.ModelState.IsValid);
-                Assert.NotNull(pageModel.Analysis);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var unchanged = await dbContext.Analyses
-                    .Include(candidate => candidate.ContextFragments)
-                    .SingleAsync(candidate => candidate.Id == analysis.Id);
-
-                Assert.Equal(originalUpdatedAt, unchanged.UpdatedAt);
-                Assert.Empty(unchanged.ContextFragments);
-                Assert.False(Directory.Exists(Path.Combine(contentRootPath, "data", "uploads")));
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
-    }
-
-    [Fact]
-    public async Task DetailsPage_UploadsContextFileAndStoresMetadataTextAndUpdatedAtWithoutChangingStatus()
-    {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
-
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var originalUpdatedAt = new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero);
-            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.InputIncomplete, originalUpdatedAt);
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.ApiDescription,
-                        Source = "  API file source  ",
-                        File = CreateUploadFile("payment-api.JSON", "{\"endpoint\":\"/payments\"}")
-                    }
-                };
-                pageModel.ModelState.AddModelError("ContextFragmentInput.Source", "Источник обязателен.");
-                pageModel.ModelState.AddModelError("ContextFragmentInput.Text", "Текст обязателен.");
-
-                var result = await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-                var redirect = Assert.IsType<RedirectToPageResult>(result);
-
-                Assert.Equal("/Analyses/Details", redirect.PageName);
-                Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var updated = await dbContext.Analyses
-                    .Include(candidate => candidate.ContextFragments)
-                    .SingleAsync(candidate => candidate.Id == analysis.Id);
-                var fragment = Assert.Single(updated.ContextFragments);
-                var savedPath = Path.Combine(contentRootPath, fragment.FilePath!);
-
-                Assert.Equal(ContextFragmentType.ApiDescription, fragment.Type);
-                Assert.Equal("API file source", fragment.Source);
-                Assert.Equal("payment-api.JSON", fragment.FileName);
-                Assert.Equal("{\"endpoint\":\"/payments\"}", fragment.Text);
-                Assert.StartsWith($"data/uploads/{analysis.Id}/", fragment.FilePath);
-                Assert.EndsWith(".json", fragment.FilePath);
-                Assert.Equal("{\"endpoint\":\"/payments\"}", await File.ReadAllTextAsync(savedPath));
-                Assert.True(updated.UpdatedAt > originalUpdatedAt);
-                Assert.Equal(AnalysisStatus.InputIncomplete, updated.Status);
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
-    }
-
-    [Fact]
-    public async Task DetailsPage_UsesSafeUniqueStoredFileNamesWithoutOverwritingExistingUpload()
-    {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
-
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var analysis = CreateAnalysis(
-                "Gateway migration",
-                AnalysisStatus.ReadyForAnalysis,
-                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                const string unsafeFileName = @"..\nested/shared-name.md";
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = CreateUploadFile(unsafeFileName, "First upload.")
-                    }
-                };
-
-                await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                const string unsafeFileName = @"..\nested/shared-name.md";
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = CreateUploadFile(unsafeFileName, "Second upload.")
-                    }
-                };
-
-                await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var fragments = await dbContext.ContextFragments
-                    .Where(candidate => candidate.AnalysisId == analysis.Id)
-                    .ToListAsync();
-
-                Assert.Equal(2, fragments.Count);
-                Assert.All(fragments, fragment =>
-                {
-                    Assert.Equal("shared-name.md", fragment.FileName);
-                    Assert.DoesNotContain("..", fragment.FileName);
-                    Assert.DoesNotContain("/", fragment.FileName);
-                    Assert.DoesNotContain("\\", fragment.FileName);
-                    Assert.DoesNotContain("shared-name", fragment.FilePath);
-                    Assert.DoesNotContain("..", fragment.FilePath);
-                    Assert.True(File.Exists(Path.Combine(contentRootPath, fragment.FilePath!)));
-                });
-                Assert.NotEqual(fragments[0].FilePath, fragments[1].FilePath);
-                Assert.Contains(
-                    fragments,
-                    fragment => File.ReadAllText(Path.Combine(contentRootPath, fragment.FilePath!)) == "First upload.");
-                Assert.Contains(
-                    fragments,
-                    fragment => File.ReadAllText(Path.Combine(contentRootPath, fragment.FilePath!)) == "Second upload.");
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
-    }
-
-    [Fact]
-    public async Task DetailsPage_ReturnsPageAndRemovesStoredUploadFileWhenDatabaseSaveFails()
-    {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
-
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var analysis = CreateAnalysis(
-                "Gateway migration",
-                AnalysisStatus.ReadyForAnalysis,
-                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
-
-            AddContextFragmentInsertFailureTrigger(databasePath);
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = CreateUploadFile("context.md", "Uploaded context text.")
-                    }
-                };
-
-                var result = await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-
-                Assert.IsType<PageResult>(result);
-                Assert.False(pageModel.ModelState.IsValid);
-                Assert.True(pageModel.ModelState.TryGetValue("UploadContextFragmentInput.File", out var fileState));
-                var error = Assert.Single(fileState.Errors);
-                Assert.Equal("Не удалось загрузить файл. Проверьте файл и повторите попытку.", error.ErrorMessage);
-                Assert.NotNull(pageModel.Analysis);
-                Assert.Equal(analysis.Id, pageModel.Analysis.Id);
-                Assert.Empty(pageModel.Analysis.ContextFragments);
-
-                var uploadsRoot = Path.Combine(contentRootPath, "data", "uploads");
-                Assert.False(Directory.Exists(uploadsRoot) && Directory.EnumerateFiles(uploadsRoot, "*", SearchOption.AllDirectories).Any());
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                Assert.Empty(await dbContext.ContextFragments
-                    .Where(candidate => candidate.AnalysisId == analysis.Id)
-                    .ToListAsync());
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
+        Assert.Contains("asp-page-handler=\"AddContextFragment\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("ContextFragmentInput.Text", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("string? FileName", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("string? FilePath", detailsModelSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3096,38 +2739,6 @@ public sealed class AnalysisPagesTests
         ..impactMap.OptionsForExpertReview,
         impactMap.PreliminaryAssessment
     ];
-
-    private static IFormFile CreateUploadFile(string fileName, string content)
-    {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
-
-        return CreateUploadFile(fileName, bytes);
-    }
-
-    private static IFormFile CreateUploadFile(string fileName, byte[] bytes)
-    {
-        var stream = new MemoryStream(bytes);
-
-        return new FormFile(stream, 0, bytes.Length, "UploadContextFragmentInput.File", fileName);
-    }
-
-    private static void AddContextFragmentInsertFailureTrigger(string databasePath)
-    {
-        SqliteConnection.ClearAllPools();
-
-        using var connection = new SqliteConnection($"Data Source={databasePath}");
-        connection.Open();
-
-        using var command = connection.CreateCommand();
-        command.CommandText = """
-            CREATE TRIGGER RejectContextFragmentInsert
-            BEFORE INSERT ON ContextFragments
-            BEGIN
-                SELECT RAISE(ABORT, 'Simulated context fragment insert failure');
-            END;
-            """;
-        command.ExecuteNonQuery();
-    }
 
     private static void DeleteDatabase(string databasePath)
     {
