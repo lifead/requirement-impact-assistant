@@ -12,6 +12,7 @@ using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
 using RequirementImpactAssistant.Web.Pages.Analyses;
+using RequirementImpactAssistant.Tests.Support;
 
 namespace RequirementImpactAssistant.Tests.Application;
 
@@ -46,6 +47,106 @@ public sealed class AnalysisMarkdownExportServiceTests
                 Assert.Contains("payment-api-change-", result.FileName, StringComparison.Ordinal);
                 AssertMarkdownContainsSnapshotSections(result.Markdown, analysis.ContextFragments.Single().Id);
             }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExportAsync_ExportsSavedMvp1DirectLlmSmokeBaselineHumanLayerAndImpactMap()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var baseline = Mvp1SmokeBaselineFixture.Create();
+            var analysis = Mvp1SmokeBaselineFixture.CreateSavedDirectLlmAnalysis();
+
+            await SaveAnalysisAsync(options, analysis);
+
+            await using var dbContext = new ApplicationDbContext(options);
+            var service = new AnalysisMarkdownExportService(dbContext);
+
+            var result = await service.ExportAsync(analysis.Id, DateTimeOffset.UtcNow);
+
+            Assert.Equal(AnalysisMarkdownExportResultKind.Exported, result.Kind);
+            Assert.Contains($"# {baseline.Analysis.Title}", result.Markdown);
+            Assert.Contains($"- **Analysis mode:** {AnalysisMode.DirectLlm}", result.Markdown);
+            Assert.Contains($"- **Engine:** {Mvp1SmokeBaselineFixture.DirectLlmEngineName}", result.Markdown);
+            Assert.Contains($"- **Provider:** {Mvp1SmokeBaselineFixture.DirectLlmProviderName}", result.Markdown);
+            Assert.Contains("- **Adapter:** Not provided", result.Markdown);
+            Assert.Contains(
+                $"- **Model workflow profile:** {Mvp1SmokeBaselineFixture.DirectLlmModelWorkflowProfileName}",
+                result.Markdown);
+            Assert.Contains("- **Manual context forwarded to external AI or RAG:** False", result.Markdown);
+            Assert.Contains($"- **Retrieved context state:** {RetrievedContextState.Unavailable}", result.Markdown);
+            Assert.Contains($"- **State:** {RetrievedContextState.Unavailable}", result.Markdown);
+            Assert.Contains("Retrieved context is unavailable for this saved analysis result.", result.Markdown);
+            Assert.Contains("No retrieved context items were saved.", result.Markdown);
+            Assert.DoesNotContain("### Retrieved context item 1:", result.Markdown);
+            AssertMarkdownContainsSavedMvp1HumanLayerAndImpactMap(result.Markdown, baseline);
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExportAsync_ExportsSavedMvp1ExternalRagSmokeBaselineHumanLayerRetrievedContextAndImpactMap()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var baseline = Mvp1SmokeBaselineFixture.Create();
+            var analysis = Mvp1SmokeBaselineFixture.CreateSavedExternalRagAnalysis();
+            var metadata = analysis.AiAnalysisResult!.Metadata;
+
+            await SaveAnalysisAsync(options, analysis);
+
+            await using var dbContext = new ApplicationDbContext(options);
+            var service = new AnalysisMarkdownExportService(dbContext);
+
+            var result = await service.ExportAsync(analysis.Id, DateTimeOffset.UtcNow);
+
+            Assert.Equal(AnalysisMarkdownExportResultKind.Exported, result.Kind);
+            Assert.Contains($"# {baseline.Analysis.Title}", result.Markdown);
+            Assert.Contains($"- **Analysis mode:** {AnalysisMode.ExternalRag}", result.Markdown);
+            Assert.Contains(
+                $"- **Engine:** {baseline.ExternalHappyPathRequest.ExecutionMetadata.EngineName}",
+                result.Markdown);
+            Assert.Contains($"- **Provider:** {baseline.ExternalHappyPathResponse.Metadata.ProviderName}", result.Markdown);
+            Assert.Contains($"- **Adapter:** {baseline.ExternalHappyPathResponse.Metadata.AdapterName}", result.Markdown);
+            Assert.Contains($"- **Model workflow profile:** {metadata.ModelWorkflowProfileName}", result.Markdown);
+            Assert.Contains("- **Manual context forwarded to external AI or RAG:** True", result.Markdown);
+            Assert.Contains(
+                $"- **Retrieved context state:** {baseline.ExternalHappyPathResponse.RetrievedContextState}",
+                result.Markdown);
+            Assert.Contains($"- **State:** {baseline.ExternalHappyPathResponse.RetrievedContextState}", result.Markdown);
+            Assert.Contains("Retrieved context was saved for this analysis result.", result.Markdown);
+            Assert.Equal(
+                baseline.ExternalHappyPathResponse.RetrievedContextItems.Count,
+                CountRetrievedContextItemHeadings(result.Markdown));
+
+            foreach (var item in baseline.ExternalHappyPathResponse.RetrievedContextItems)
+            {
+                Assert.Contains($"### Retrieved context item {item.Rank}: {item.SourceTitle}", result.Markdown);
+                Assert.Contains($"- **Source id:** {item.SourceId}", result.Markdown);
+                Assert.Contains($"- **External reference:** {item.ExternalReference}", result.Markdown);
+                Assert.Contains($"- **Fragment id:** {item.FragmentId}", result.Markdown);
+                Assert.Contains($"- **URL or reference:** {item.UrlOrReference}", result.Markdown);
+                Assert.Contains($"- **Provider:** {item.ProviderName}", result.Markdown);
+                Assert.Contains($"- **Adapter:** {item.AdapterName}", result.Markdown);
+                Assert.Contains($"- **Completeness:** {item.Completeness}", result.Markdown);
+                Assert.Contains(item.Text!, result.Markdown);
+            }
+
+            AssertMarkdownContainsSavedMvp1HumanLayerAndImpactMap(result.Markdown, baseline);
         }
         finally
         {
@@ -647,10 +748,91 @@ public sealed class AnalysisMarkdownExportServiceTests
             Path.GetTempPath(),
             $"requirement-impact-assistant-export-{Guid.NewGuid():N}.db");
 
+    private static async Task SaveAnalysisAsync(DbContextOptions<ApplicationDbContext> options, Analysis analysis)
+    {
+        var retrievedContextItems = analysis.AiAnalysisResult?.Metadata.RetrievedContextItems.ToList() ?? [];
+        analysis.AiAnalysisResult?.Metadata.RetrievedContextItems.Clear();
+
+        await using var dbContext = new ApplicationDbContext(options);
+        await dbContext.Database.MigrateAsync();
+        dbContext.Analyses.Add(analysis);
+        await dbContext.SaveChangesAsync();
+
+        if (analysis.AiAnalysisResult is null || retrievedContextItems.Count == 0)
+        {
+            return;
+        }
+
+        for (var index = 0; index < retrievedContextItems.Count; index++)
+        {
+            var contextItem = retrievedContextItems[index];
+            analysis.AiAnalysisResult.Metadata.RetrievedContextItems.Add(contextItem);
+            dbContext.Entry(contextItem).Property("Ordinal").CurrentValue = index;
+        }
+
+        await dbContext.SaveChangesAsync();
+    }
+
     private static DbContextOptions<ApplicationDbContext> CreateOptions(string databasePath) =>
         new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseSqlite($"Data Source={databasePath}")
             .Options;
+
+    private static void AssertMarkdownContainsSavedMvp1HumanLayerAndImpactMap(
+        string markdown,
+        Mvp1SmokeBaseline baseline)
+    {
+        Assert.Contains("## Context fragments", markdown);
+        foreach (var fragment in baseline.ManualContextFragments)
+        {
+            Assert.Contains($"- **Identifier:** {fragment.Id}", markdown);
+            Assert.Contains(fragment.Source, markdown);
+            Assert.Contains(fragment.Text, markdown);
+        }
+
+        Assert.Contains("## Structured impact map", markdown);
+        Assert.Contains(baseline.ExpectedImpactMap.ChangeSummary.Title, markdown);
+        Assert.Contains(baseline.ExpectedImpactMap.AffectedRequirements.Single().Title, markdown);
+        Assert.Contains(baseline.ExpectedImpactMap.AffectedProjectDecisions.Single().Title, markdown);
+        Assert.Contains(baseline.ExpectedImpactMap.AffectedApiInterfacesDocumentsTests.Single().Title, markdown);
+        Assert.Contains(baseline.ExpectedImpactMap.Risks.Single().Title, markdown);
+        Assert.Contains(baseline.ExpectedImpactMap.OptionsForExpertReview.Single().Title, markdown);
+        Assert.Contains(baseline.ExpectedImpactMap.PreliminaryAssessment.Title, markdown);
+
+        Assert.Contains("## Expert evaluation", markdown);
+        Assert.Contains($"- **Context sufficiency:** {baseline.ExpectedExpertEvaluation.ContextSufficiency}", markdown);
+        Assert.Contains($"- **Result usefulness:** {baseline.ExpectedExpertEvaluation.ResultUsefulness}", markdown);
+        Assert.Contains(baseline.ExpectedExpertEvaluation.GeneralComment, markdown);
+
+        foreach (var item in baseline.ExpectedExpertEvaluation.EvaluatedItems)
+        {
+            Assert.Contains($"- **{item.TargetId}** ({item.TargetType})", markdown);
+            Assert.Contains($"  - **Mark:** {item.Mark}", markdown);
+            Assert.Contains(item.Comment, markdown);
+            Assert.Contains(item.CorrectionText, markdown);
+        }
+
+        foreach (var item in baseline.ExpectedExpertEvaluation.MissedItems)
+        {
+            Assert.Contains(item.Title, markdown);
+            Assert.Contains(item.Description, markdown);
+            Assert.Contains(item.Comment, markdown);
+        }
+
+        foreach (var correction in baseline.ExpectedExpertEvaluation.Corrections)
+        {
+            Assert.Contains(correction.TargetId, markdown);
+            Assert.Contains(correction.Text, markdown);
+            Assert.Contains(correction.Comment, markdown);
+        }
+
+        Assert.Contains("## Expert conclusion", markdown);
+        Assert.Contains($"- **Conclusion:** {baseline.ExpectedExpertConclusion.ConclusionType}", markdown);
+        Assert.Contains(baseline.ExpectedExpertConclusion.Comment, markdown);
+        Assert.Contains(baseline.ExpectedExpertConclusion.Rationale, markdown);
+        Assert.Contains("## Decision boundary", markdown);
+        Assert.Contains("does not make a management decision", markdown);
+    }
 
     private static async Task<SavedMockExternalAnalysis> SaveAnalysisThroughMockExternalModeAsync(
         DbContextOptions<ApplicationDbContext> options,

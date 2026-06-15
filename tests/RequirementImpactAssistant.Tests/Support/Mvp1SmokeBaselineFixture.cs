@@ -15,6 +15,10 @@ public static class Mvp1SmokeBaselineFixture
     public static readonly Guid ManualDecisionContextFragmentId = Guid.Parse("10000000-0000-4000-8000-000000000102");
     public static readonly Guid ExpertEvaluationId = Guid.Parse("10000000-0000-4000-8000-000000000201");
     public static readonly Guid ExpertConclusionId = Guid.Parse("10000000-0000-4000-8000-000000000301");
+    public const string DirectLlmEngineName = "local-smoke-direct-baseline";
+    public const string DirectLlmProviderName = "LocalSmokeDirectProvider";
+    public const string DirectLlmModelWorkflowProfileName = "local-demo-model";
+    public const string PromptVersion = "mvp1-smoke-baseline-v1";
 
     public static readonly DateTimeOffset CreatedAt = new(2026, 1, 15, 9, 0, 0, TimeSpan.Zero);
     public static readonly DateTimeOffset UpdatedAt = new(2026, 1, 15, 9, 5, 0, TimeSpan.Zero);
@@ -43,6 +47,76 @@ public static class Mvp1SmokeBaselineFixture
             ExpectedExpertConclusion: expectedExpertConclusion,
             ExternalHappyPathRequest: externalRequest,
             ExternalHappyPathResponse: externalResponse);
+    }
+
+    public static DomainAnalysis CreateSavedDirectLlmAnalysis()
+    {
+        var baseline = Create();
+        var analysis = baseline.Analysis;
+
+        MarkAsExpertConclusionFixed(analysis);
+        analysis.AiAnalysisResult = new AiAnalysisResult
+        {
+            AnalysisId = AnalysisId,
+            Status = AiAnalysisResultStatus.Completed,
+            GeneratedAt = GeneratedAt,
+            EngineName = DirectLlmEngineName,
+            ProviderName = DirectLlmProviderName,
+            ModelName = DirectLlmModelWorkflowProfileName,
+            Metadata = AiAnalysisResultMetadata.CreateDefaultDirectLlm(
+                DirectLlmEngineName,
+                DirectLlmProviderName,
+                DirectLlmModelWorkflowProfileName),
+            PromptVersion = PromptVersion,
+            InputSnapshot = baseline.AnalysisRequest.InputSnapshotJson,
+            RawResponse = "{\"status\":\"completed\",\"mode\":\"DirectLlm\",\"network\":\"disabled\"}",
+            ImpactMap = baseline.ExpectedImpactMap,
+            ErrorMessage = string.Empty
+        };
+        analysis.ExpertEvaluation = baseline.ExpectedExpertEvaluation;
+        analysis.ExpertConclusion = baseline.ExpectedExpertConclusion;
+
+        return analysis;
+    }
+
+    public static DomainAnalysis CreateSavedExternalRagAnalysis()
+    {
+        var baseline = Create();
+        var analysis = baseline.Analysis;
+        var response = baseline.ExternalHappyPathResponse;
+
+        MarkAsExpertConclusionFixed(analysis);
+        analysis.AiAnalysisResult = new AiAnalysisResult
+        {
+            AnalysisId = AnalysisId,
+            Status = AiAnalysisResultStatus.Completed,
+            GeneratedAt = GeneratedAt,
+            EngineName = baseline.ExternalHappyPathRequest.ExecutionMetadata.EngineName,
+            ProviderName = response.Metadata.ProviderName ?? string.Empty,
+            ModelName = CreateExternalModelWorkflowProfileName(response.Metadata),
+            Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = baseline.ExternalHappyPathRequest.ExecutionMetadata.EngineName,
+                ProviderName = response.Metadata.ProviderName,
+                AdapterName = response.Metadata.AdapterName,
+                ModelWorkflowProfileName = CreateExternalModelWorkflowProfileName(response.Metadata),
+                RetrievedContextState = response.RetrievedContextState,
+                RetrievedContextItems = response.RetrievedContextItems.ToList(),
+                Warnings = response.Warnings.ToList(),
+                ManualContextForwardedToExternalAiOrRag =
+                    baseline.ExternalHappyPathRequest.CanForwardManualContextToExternalAiOrRag
+            },
+            PromptVersion = PromptVersion,
+            InputSnapshot = baseline.AnalysisRequest.InputSnapshotJson,
+            RawResponse = response.SanitizedDiagnosticSnapshot ?? string.Empty,
+            ImpactMap = response.ImpactMap,
+            ErrorMessage = string.Join(Environment.NewLine, response.Errors.Select(error => error.Message))
+        };
+        analysis.ExpertEvaluation = baseline.ExpectedExpertEvaluation;
+        analysis.ExpertConclusion = baseline.ExpectedExpertConclusion;
+
+        return analysis;
     }
 
     public static DomainAnalysis CreateAnalysis()
@@ -326,6 +400,26 @@ public static class Mvp1SmokeBaselineFixture
             Errors: [],
             SanitizedDiagnosticSnapshot:
                 "{\"status\":\"completed\",\"provider\":\"LocalMockKnowledgeSource\",\"adapter\":\"LocalSmokeFixtureAdapter\",\"profile\":\"happy-path\",\"retrievedContextState\":\"Available\",\"retrievedContextItemCount\":2,\"network\":\"disabled\"}");
+
+    private static void MarkAsExpertConclusionFixed(DomainAnalysis analysis)
+    {
+        analysis.Status = AnalysisStatus.ExpertConclusionFixed;
+        analysis.UpdatedAt = ExpertFixedAt;
+        analysis.FixedAt = ExpertFixedAt;
+    }
+
+    private static string CreateExternalModelWorkflowProfileName(ExternalRagAdapterResponseMetadata metadata)
+    {
+        var values = new[]
+            {
+                metadata.ModelName,
+                metadata.WorkflowName,
+                metadata.ProfileName
+            }
+            .Where(value => !string.IsNullOrWhiteSpace(value));
+
+        return string.Join(" / ", values);
+    }
 }
 
 public sealed record Mvp1SmokeBaseline(

@@ -14,6 +14,7 @@ using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
 using RequirementImpactAssistant.Web.Pages.Analyses;
+using RequirementImpactAssistant.Tests.Support;
 
 namespace RequirementImpactAssistant.Tests.Application;
 
@@ -107,6 +108,141 @@ public sealed class AnalysisJsonExportServiceTests
                 Assert.Single(retrievedContext.GetProperty("limitations").EnumerateArray()).GetString());
             Assert.Empty(retrievedContext.GetProperty("warnings").EnumerateArray());
             Assert.False(aiAnalysisResult.TryGetProperty("items", out _));
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExportAsync_ExportsSavedMvp1DirectLlmSmokeBaselineHumanLayerAndImpactMap()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var baseline = Mvp1SmokeBaselineFixture.Create();
+            var analysis = Mvp1SmokeBaselineFixture.CreateSavedDirectLlmAnalysis();
+
+            await SaveAnalysisAsync(options, analysis);
+
+            await using var dbContext = new ApplicationDbContext(options);
+            var service = new AnalysisJsonExportService(dbContext);
+
+            var result = await service.ExportAsync(analysis.Id, DateTimeOffset.UtcNow);
+
+            Assert.Equal(AnalysisJsonExportResultKind.Exported, result.Kind);
+
+            using var document = JsonDocument.Parse(result.Json);
+            var root = document.RootElement;
+            var aiAnalysisResult = root.GetProperty("aiAnalysisResult");
+            var retrievedContext = aiAnalysisResult.GetProperty("retrievedContext");
+
+            Assert.Equal(baseline.Analysis.Title, root.GetProperty("metadata").GetProperty("title").GetString());
+            Assert.Equal(AnalysisMode.DirectLlm.ToString(), aiAnalysisResult.GetProperty("analysisMode").GetString());
+            Assert.Equal(
+                Mvp1SmokeBaselineFixture.DirectLlmEngineName,
+                aiAnalysisResult.GetProperty("analysisEngine").GetProperty("name").GetString());
+            Assert.Equal(
+                Mvp1SmokeBaselineFixture.DirectLlmProviderName,
+                aiAnalysisResult.GetProperty("provider").GetProperty("name").GetString());
+            Assert.Equal(JsonValueKind.Null, aiAnalysisResult.GetProperty("adapter").GetProperty("name").ValueKind);
+            Assert.Equal(
+                Mvp1SmokeBaselineFixture.DirectLlmModelWorkflowProfileName,
+                aiAnalysisResult.GetProperty("modelWorkflowProfile").GetProperty("name").GetString());
+            Assert.False(
+                aiAnalysisResult.GetProperty("manualContextUsage").GetProperty("forwardedToExternalAiOrRag").GetBoolean());
+            Assert.Equal(
+                RetrievedContextState.Unavailable.ToString(),
+                aiAnalysisResult.GetProperty("retrievedContextState").GetString());
+            Assert.Equal(RetrievedContextState.Unavailable.ToString(), retrievedContext.GetProperty("state").GetString());
+            Assert.Empty(retrievedContext.GetProperty("items").EnumerateArray());
+            Assert.Equal(
+                "Retrieved context is unavailable for this saved analysis result.",
+                Assert.Single(retrievedContext.GetProperty("limitations").EnumerateArray()).GetString());
+            AssertJsonContainsSavedMvp1HumanLayerAndImpactMap(root, baseline);
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExportAsync_ExportsSavedMvp1ExternalRagSmokeBaselineHumanLayerRetrievedContextAndImpactMap()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var baseline = Mvp1SmokeBaselineFixture.Create();
+            var analysis = Mvp1SmokeBaselineFixture.CreateSavedExternalRagAnalysis();
+            var metadata = analysis.AiAnalysisResult!.Metadata;
+
+            await SaveAnalysisAsync(options, analysis);
+
+            await using var dbContext = new ApplicationDbContext(options);
+            var service = new AnalysisJsonExportService(dbContext);
+
+            var result = await service.ExportAsync(analysis.Id, DateTimeOffset.UtcNow);
+
+            Assert.Equal(AnalysisJsonExportResultKind.Exported, result.Kind);
+
+            using var document = JsonDocument.Parse(result.Json);
+            var root = document.RootElement;
+            var aiAnalysisResult = root.GetProperty("aiAnalysisResult");
+            var retrievedContext = aiAnalysisResult.GetProperty("retrievedContext");
+
+            Assert.Equal(baseline.Analysis.Title, root.GetProperty("metadata").GetProperty("title").GetString());
+            Assert.Equal(AnalysisMode.ExternalRag.ToString(), aiAnalysisResult.GetProperty("analysisMode").GetString());
+            Assert.Equal(
+                baseline.ExternalHappyPathRequest.ExecutionMetadata.EngineName,
+                aiAnalysisResult.GetProperty("analysisEngine").GetProperty("name").GetString());
+            Assert.Equal(
+                baseline.ExternalHappyPathResponse.Metadata.ProviderName,
+                aiAnalysisResult.GetProperty("provider").GetProperty("name").GetString());
+            Assert.Equal(
+                baseline.ExternalHappyPathResponse.Metadata.AdapterName,
+                aiAnalysisResult.GetProperty("adapter").GetProperty("name").GetString());
+            Assert.Equal(
+                metadata.ModelWorkflowProfileName,
+                aiAnalysisResult.GetProperty("modelWorkflowProfile").GetProperty("name").GetString());
+            Assert.True(
+                aiAnalysisResult.GetProperty("manualContextUsage").GetProperty("forwardedToExternalAiOrRag").GetBoolean());
+            Assert.Equal(
+                baseline.ExternalHappyPathResponse.RetrievedContextState.ToString(),
+                aiAnalysisResult.GetProperty("retrievedContextState").GetString());
+            Assert.Equal(
+                baseline.ExternalHappyPathResponse.RetrievedContextState.ToString(),
+                retrievedContext.GetProperty("state").GetString());
+            Assert.Empty(retrievedContext.GetProperty("limitations").EnumerateArray());
+
+            var items = retrievedContext.GetProperty("items").EnumerateArray().ToArray();
+            Assert.Equal(baseline.ExternalHappyPathResponse.RetrievedContextItems.Count, items.Length);
+
+            for (var index = 0; index < items.Length; index++)
+            {
+                var expected = baseline.ExternalHappyPathResponse.RetrievedContextItems[index];
+                var actual = items[index];
+
+                Assert.Equal(expected.SourceTitle, actual.GetProperty("sourceTitle").GetString());
+                Assert.Equal(expected.SourceId, actual.GetProperty("sourceId").GetString());
+                Assert.Equal(expected.ExternalReference, actual.GetProperty("externalReference").GetString());
+                Assert.Equal(expected.FragmentId, actual.GetProperty("fragmentId").GetString());
+                Assert.Equal(expected.Text, actual.GetProperty("text").GetString());
+                Assert.Equal(expected.Excerpt, actual.GetProperty("excerpt").GetString());
+                Assert.Equal(expected.UrlOrReference, actual.GetProperty("urlOrReference").GetString());
+                Assert.Equal(expected.Rank, actual.GetProperty("rank").GetInt32());
+                Assert.Equal(expected.Score, actual.GetProperty("score").GetDouble());
+                Assert.Equal(expected.ProviderName, actual.GetProperty("provider").GetString());
+                Assert.Equal(expected.AdapterName, actual.GetProperty("adapter").GetString());
+                Assert.Equal(expected.Completeness.ToString(), actual.GetProperty("completeness").GetString());
+            }
+
+            AssertJsonContainsSavedMvp1HumanLayerAndImpactMap(root, baseline);
         }
         finally
         {
@@ -887,10 +1023,123 @@ public sealed class AnalysisJsonExportServiceTests
 
     private static async Task SaveAnalysisAsync(DbContextOptions<ApplicationDbContext> options, Analysis analysis)
     {
+        var retrievedContextItems = analysis.AiAnalysisResult?.Metadata.RetrievedContextItems.ToList() ?? [];
+        analysis.AiAnalysisResult?.Metadata.RetrievedContextItems.Clear();
+
         await using var dbContext = new ApplicationDbContext(options);
         await dbContext.Database.MigrateAsync();
         dbContext.Analyses.Add(analysis);
         await dbContext.SaveChangesAsync();
+
+        if (analysis.AiAnalysisResult is null || retrievedContextItems.Count == 0)
+        {
+            return;
+        }
+
+        for (var index = 0; index < retrievedContextItems.Count; index++)
+        {
+            var contextItem = retrievedContextItems[index];
+            analysis.AiAnalysisResult.Metadata.RetrievedContextItems.Add(contextItem);
+            dbContext.Entry(contextItem).Property("Ordinal").CurrentValue = index;
+        }
+
+        await dbContext.SaveChangesAsync();
+    }
+
+    private static void AssertJsonContainsSavedMvp1HumanLayerAndImpactMap(
+        JsonElement root,
+        Mvp1SmokeBaseline baseline)
+    {
+        var contextFragments = root.GetProperty("contextFragments").EnumerateArray().ToArray();
+        Assert.Equal(baseline.ManualContextFragments.Count, contextFragments.Length);
+
+        foreach (var expected in baseline.ManualContextFragments)
+        {
+            var actual = Assert.Single(
+                contextFragments,
+                fragment => fragment.GetProperty("id").GetGuid() == expected.Id);
+            Assert.Equal(expected.Source, actual.GetProperty("source").GetString());
+            Assert.Equal(expected.Text, actual.GetProperty("text").GetString());
+        }
+
+        var impactMap = root.GetProperty("impactMap");
+        Assert.Equal(
+            baseline.ExpectedImpactMap.ChangeSummary.Title,
+            impactMap.GetProperty("changeSummary").GetProperty("title").GetString());
+        Assert.Equal(
+            baseline.ExpectedImpactMap.AffectedRequirements.Single().Title,
+            impactMap.GetProperty("affectedRequirements")[0].GetProperty("title").GetString());
+        Assert.Equal(
+            baseline.ExpectedImpactMap.AffectedProjectDecisions.Single().Title,
+            impactMap.GetProperty("affectedProjectDecisions")[0].GetProperty("title").GetString());
+        Assert.Equal(
+            baseline.ExpectedImpactMap.AffectedApiInterfacesDocumentsTests.Single().Title,
+            impactMap.GetProperty("affectedApiInterfacesDocumentsTests")[0].GetProperty("title").GetString());
+        Assert.Equal(
+            baseline.ExpectedImpactMap.Risks.Single().Title,
+            impactMap.GetProperty("risks")[0].GetProperty("title").GetString());
+        Assert.Equal(
+            baseline.ExpectedImpactMap.OptionsForExpertReview.Single().Title,
+            impactMap.GetProperty("optionsForExpertReview")[0].GetProperty("title").GetString());
+        Assert.Equal(
+            baseline.ExpectedImpactMap.PreliminaryAssessment.Title,
+            impactMap.GetProperty("preliminaryAssessment").GetProperty("title").GetString());
+
+        var expertEvaluation = root.GetProperty("expertEvaluation");
+        Assert.Equal(
+            baseline.ExpectedExpertEvaluation.ContextSufficiency.ToString(),
+            expertEvaluation.GetProperty("contextSufficiency").GetString());
+        Assert.Equal(
+            baseline.ExpectedExpertEvaluation.ResultUsefulness.ToString(),
+            expertEvaluation.GetProperty("resultUsefulness").GetString());
+        Assert.Equal(
+            baseline.ExpectedExpertEvaluation.GeneralComment,
+            expertEvaluation.GetProperty("generalComment").GetString());
+
+        var expertMarks = expertEvaluation.GetProperty("expertMarks").EnumerateArray().ToArray();
+        Assert.Equal(baseline.ExpectedExpertEvaluation.EvaluatedItems.Count, expertMarks.Length);
+        foreach (var expected in baseline.ExpectedExpertEvaluation.EvaluatedItems)
+        {
+            var actual = Assert.Single(
+                expertMarks,
+                item => item.GetProperty("targetId").GetString() == expected.TargetId);
+            Assert.Equal(expected.TargetType.ToString(), actual.GetProperty("targetType").GetString());
+            Assert.Equal(expected.Mark.ToString(), actual.GetProperty("mark").GetString());
+            Assert.Equal(expected.Comment, actual.GetProperty("comment").GetString());
+            Assert.Equal(expected.CorrectionText, actual.GetProperty("correctionText").GetString());
+        }
+
+        var missedItems = expertEvaluation.GetProperty("missedItems").EnumerateArray().ToArray();
+        var expectedMissedItem = Assert.Single(baseline.ExpectedExpertEvaluation.MissedItems);
+        var actualMissedItem = Assert.Single(missedItems);
+        Assert.Equal(expectedMissedItem.Title, actualMissedItem.GetProperty("title").GetString());
+        Assert.Equal(expectedMissedItem.Description, actualMissedItem.GetProperty("description").GetString());
+        Assert.Equal(expectedMissedItem.Comment, actualMissedItem.GetProperty("comment").GetString());
+
+        var corrections = expertEvaluation.GetProperty("corrections").EnumerateArray().ToArray();
+        var expectedCorrection = Assert.Single(baseline.ExpectedExpertEvaluation.Corrections);
+        var actualCorrection = Assert.Single(corrections);
+        Assert.Equal(expectedCorrection.TargetId, actualCorrection.GetProperty("targetId").GetString());
+        Assert.Equal(expectedCorrection.Text, actualCorrection.GetProperty("text").GetString());
+        Assert.Equal(expectedCorrection.Comment, actualCorrection.GetProperty("comment").GetString());
+
+        var expertConclusion = root.GetProperty("expertConclusion");
+        Assert.Equal(
+            baseline.ExpectedExpertConclusion.ConclusionType.ToString(),
+            expertConclusion.GetProperty("conclusionType").GetString());
+        Assert.Equal(baseline.ExpectedExpertConclusion.Comment, expertConclusion.GetProperty("comment").GetString());
+        Assert.Equal(baseline.ExpectedExpertConclusion.Rationale, expertConclusion.GetProperty("rationale").GetString());
+        Assert.Equal(
+            baseline.ExpectedExpertConclusion.FixedAt,
+            expertConclusion.GetProperty("fixedAt").GetDateTimeOffset());
+
+        Assert.Contains(
+            "does not make a management decision",
+            root.GetProperty("exportMetadata")
+                .GetProperty("boundaryNotice")
+                .GetProperty("statement")
+                .GetString(),
+            StringComparison.Ordinal);
     }
 
     private static async Task<SavedMockExternalAnalysis> SaveAnalysisThroughMockExternalModeAsync(
