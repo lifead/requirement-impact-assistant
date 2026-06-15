@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.External;
+using RequirementImpactAssistant.Web.Application.Analysis.External.Dify;
 
 namespace RequirementImpactAssistant.Tests.Application;
 
@@ -12,7 +13,7 @@ public sealed class Stage4ArchitectureRegressionTests
     private static readonly Assembly WebAssembly = typeof(IAiAnalysisEngine).Assembly;
 
     [Fact]
-    public void ProductionCode_ContainsOnlyLocalMockExternalRagAdapterImplementation()
+    public void ProductionCode_ContainsOnlyLocalMockAndInternalDifyExternalRagAdapterImplementations()
     {
         var implementations = WebAssembly
             .GetTypes()
@@ -22,7 +23,12 @@ public sealed class Stage4ArchitectureRegressionTests
             .Order(StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal([typeof(MockExternalRagAdapter).FullName], implementations);
+        Assert.Equal(
+            [
+                typeof(DifyExternalRagAdapter).FullName,
+                typeof(MockExternalRagAdapter).FullName
+            ],
+            implementations);
     }
 
     [Fact]

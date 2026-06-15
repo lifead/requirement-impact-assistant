@@ -2,6 +2,7 @@ using System.Reflection;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.External;
+using RequirementImpactAssistant.Web.Application.Analysis.External.Dify;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 
 namespace RequirementImpactAssistant.Tests.Application;
@@ -91,7 +92,7 @@ public sealed class Stage3ArchitectureRegressionTests
     }
 
     [Fact]
-    public void ProductionCode_ContainsOnlyMockExternalRagAdapterImplementation()
+    public void ProductionCode_ContainsOnlyMockAndInternalDifyExternalRagAdapterImplementations()
     {
         var implementations = WebAssembly
             .GetTypes()
@@ -101,7 +102,12 @@ public sealed class Stage3ArchitectureRegressionTests
             .Order(StringComparer.Ordinal)
             .ToArray();
 
-        Assert.Equal([typeof(MockExternalRagAdapter).FullName], implementations);
+        Assert.Equal(
+            [
+                typeof(DifyExternalRagAdapter).FullName,
+                typeof(MockExternalRagAdapter).FullName
+            ],
+            implementations);
     }
 
     [Fact]
