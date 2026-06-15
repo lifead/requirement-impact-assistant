@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
@@ -11,6 +12,12 @@ internal static class DifyExternalRagMapper
     public const string AdapterName = nameof(DifyExternalRagAdapter);
 
     private static readonly JsonSerializerOptions DiagnosticJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly Regex SensitiveProviderWarningPattern = new(
+        @"(authorization\s*:|bearer\s+\S+|\bapi[-_\s]*key\b|\b(?:access|refresh|auth|api)?[-_\s]*token\s*[:=]\s*\S+|\bsecret\b\s*[:=]\s*\S+|\bendpoint\b\s*[:=]\s*\S+|https?://\S+|sk-[A-Za-z0-9][A-Za-z0-9._-]*)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
+        TimeSpan.FromMilliseconds(100));
+    private const string SanitizedProviderWarning =
+        "Dify provider warning was redacted because it contained sensitive diagnostic content.";
 
     public static DifyWorkflowRequestDto CreateRequest(ExternalRagAdapterRequest request)
     {
@@ -377,7 +384,7 @@ internal static class DifyExternalRagMapper
     {
         var warnings = providerWarnings
             .Where(warning => !string.IsNullOrWhiteSpace(warning))
-            .Select(warning => warning.Trim())
+            .Select(SanitizeProviderWarning)
             .ToList();
 
         switch (retrievedContextState)
@@ -396,6 +403,15 @@ internal static class DifyExternalRagMapper
         return warnings
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static string SanitizeProviderWarning(string warning)
+    {
+        var normalizedWarning = warning.Trim();
+
+        return SensitiveProviderWarningPattern.IsMatch(normalizedWarning)
+            ? SanitizedProviderWarning
+            : normalizedWarning;
     }
 
     private static bool IsProviderFailureStatus(string? providerStatus)

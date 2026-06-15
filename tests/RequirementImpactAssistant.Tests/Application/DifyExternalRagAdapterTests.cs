@@ -470,6 +470,60 @@ public sealed class DifyExternalRagAdapterTests
     }
 
     [Fact]
+    public async Task AnalyzeAsync_WhenSuccessfulProviderWarningsContainSensitiveText_SanitizesWarnings()
+    {
+        const string safeWarning = "Retrieved context coverage is limited to architecture notes.";
+        const string apiKeyWarning = "Provider warning contains API key sk-test-dify-provider-secret.";
+        const string bearerWarning = "Authorization: Bearer sk-test-dify-provider-secret";
+        const string endpointWarning = "Provider endpoint https://dify-secret.invalid/workflows/run returned a secret-like diagnostic.";
+        var handler = new CapturingHandler(_ => CreateJsonResponse(
+            HttpStatusCode.OK,
+            CreateResponseWithRetrievedContext(
+                """
+                [
+                  {
+                    "source_title": "Requirement catalogue",
+                    "text": "Gateway change context is available for expert review.",
+                    "excerpt": "Gateway change context.",
+                    "rank": 1
+                  }
+                ]
+                """,
+                warningsJson: $$"""
+                [
+                  "{{safeWarning}}",
+                  "{{apiKeyWarning}}",
+                  "{{bearerWarning}}",
+                  "{{endpointWarning}}"
+                ]
+                """)));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
+        Assert.NotNull(response.ImpactMap);
+        Assert.Empty(response.Errors);
+        Assert.Contains(safeWarning, response.Warnings);
+        Assert.Contains(
+            "Dify provider warning was redacted because it contained sensitive diagnostic content.",
+            response.Warnings);
+        AssertSanitized(
+            response,
+            [
+                TestApiKey,
+                FakeProviderSecret,
+                FakeSecretEndpoint,
+                "Authorization",
+                "Bearer",
+                "API key",
+                apiKeyWarning,
+                bearerWarning,
+                endpointWarning
+            ]);
+    }
+
+    [Fact]
     public async Task AnalyzeAsync_WhenStructuredResultHasNoRetrievedContext_ReturnsUnavailableContextWarning()
     {
         var handler = new CapturingHandler(_ => CreateJsonResponse(HttpStatusCode.OK, CreateResponseWithRetrievedContext("[]")));
@@ -602,7 +656,8 @@ public sealed class DifyExternalRagAdapterTests
 
     private static string CreateResponseWithRetrievedContext(
         string retrievedContextJson,
-        string providerStatus = "succeeded") =>
+        string providerStatus = "succeeded",
+        string warningsJson = "[]") =>
         $$"""
         {
           "workflow_run_id": "run-1",
@@ -628,7 +683,7 @@ public sealed class DifyExternalRagAdapterTests
                 }
               },
               "retrieved_context": {{retrievedContextJson}},
-              "warnings": []
+              "warnings": {{warningsJson}}
             }
           }
         }
