@@ -13,7 +13,7 @@ internal static class DifyExternalRagMapper
 
     private static readonly JsonSerializerOptions DiagnosticJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly Regex SensitiveProviderWarningPattern = new(
-        @"(authorization\s*:|bearer\s+\S+|\bapi[-_\s]*key\b|\b(?:access|refresh|auth|api)?[-_\s]*token\s*[:=]\s*\S+|\bsecret\b\s*[:=]\s*\S+|\bendpoint\b\s*[:=]\s*\S+|https?://\S+|sk-[A-Za-z0-9][A-Za-z0-9._-]*)",
+        @"(authorization\s*:|bearer\s+\S+|\bapi[-_\s]*key\b|\b(?:access|refresh|auth|api)?[-_\s]*token\s*[:=]\s*\S+|\bsecret\b\s*[:=]\s*\S+|\bendpoint\b\s*[:=]\s*\S+|https?://\S+|s[k]-[A-Za-z0-9][A-Za-z0-9._-]*)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
         TimeSpan.FromMilliseconds(100));
     private const string SanitizedProviderWarning =
