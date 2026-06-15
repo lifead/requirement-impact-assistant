@@ -37,6 +37,7 @@ Stage 9 закрыла финальный MVP-1 gate после Stage 1-8. Эт�
 - `d63f805` - Add MVP-1 stage 9 task breakdown
 - `6ebf1e8` - Sanitize Dify provider warnings
 - `5f8c0a9` - Avoid forbidden secret literal in Dify warning sanitizer
+- `4dfc138` - Add MVP-1 stage 9 summary
 
 ## Финальный review результат
 
@@ -58,7 +59,7 @@ Stage 9 закрыла финальный MVP-1 gate после Stage 1-8. Эт�
 - `dotnet build RequirementImpactAssistant.sln`: passed, 0 warnings, 0 errors.
 - `dotnet test RequirementImpactAssistant.sln`: passed, 345/345 tests, 0 failed, 0 skipped.
 - `git diff --check`: passed, no output.
-- `git status --short --branch`: branch `mvp1...origin/mvp1`; only untracked `docs/program/mvp1/stage-9-summary.md` remains pending review/commit.
+- `git status --short --branch`: branch `mvp1...origin/mvp1`; working tree clean.
 - `git log --oneline -12`: Stage 9 commits are on top of Stage 8 history.
 
 ## Сохраненные границы
