@@ -1,15 +1,12 @@
 using System.Net.Http.Headers;
 using System.Net.Mime;
 using System.Text;
-using System.Text.Json;
 using Microsoft.Extensions.Options;
 
 namespace RequirementImpactAssistant.Web.Application.Analysis.External.Dify;
 
 public sealed class DifyExternalRagAdapter : IExternalRagAdapter
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-
     private readonly HttpClient _httpClient;
     private readonly DifyExternalRagOptions _options;
 
@@ -36,7 +33,7 @@ public sealed class DifyExternalRagAdapter : IExternalRagAdapter
                 configurationStatus);
         }
 
-        var endpoint = CreateEndpoint();
+        var endpoint = DifyAgentRequestContract.NormalizeChatMessagesEndpoint(_options.Endpoint);
         if (endpoint is null)
         {
             return DifyExternalRagMapper.CreateFailureResponse(
@@ -64,7 +61,7 @@ public sealed class DifyExternalRagAdapter : IExternalRagAdapter
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, endpoint);
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.ApiKey);
         httpRequest.Content = new StringContent(
-            JsonSerializer.Serialize(DifyExternalRagMapper.CreateRequest(request), JsonOptions),
+            DifyAgentRequestContract.SerializeRequest(request),
             Encoding.UTF8,
             MediaTypeNames.Application.Json);
 
@@ -77,7 +74,10 @@ public sealed class DifyExternalRagAdapter : IExternalRagAdapter
         try
         {
             using var httpResponse = await _httpClient
-                .SendAsync(httpRequest, effectiveCancellationToken)
+                .SendAsync(
+                    httpRequest,
+                    HttpCompletionOption.ResponseHeadersRead,
+                    effectiveCancellationToken)
                 .ConfigureAwait(false);
 
             if (!httpResponse.IsSuccessStatusCode)
@@ -92,13 +92,23 @@ public sealed class DifyExternalRagAdapter : IExternalRagAdapter
                     warnings: ["Dify external RAG provider did not complete the analysis."]);
             }
 
-            var responseBody = await httpResponse.Content
-                .ReadAsStringAsync(effectiveCancellationToken)
+            await using var responseStream = await httpResponse.Content
+                .ReadAsStreamAsync(effectiveCancellationToken)
                 .ConfigureAwait(false);
-            var difyResponse = JsonSerializer.Deserialize<DifyWorkflowResponseDto>(responseBody, JsonOptions)
-                ?? new DifyWorkflowResponseDto();
+            using var streamReader = new StreamReader(
+                responseStream,
+                Encoding.UTF8,
+                detectEncodingFromByteOrderMarks: true,
+                leaveOpen: false);
+            var ssePayload = await streamReader
+                .ReadToEndAsync(effectiveCancellationToken)
+                .ConfigureAwait(false);
+            var streamResult = DifyAgentSseStreamParser.Parse(ssePayload);
 
-            return DifyExternalRagMapper.CreateResponse(request, difyResponse, _options);
+            return DifyExternalRagMapper.CreateStreamingResponse(
+                request,
+                streamResult,
+                _options);
         }
         catch (OperationCanceledException) when (timeoutCts?.IsCancellationRequested == true &&
             !cancellationToken.IsCancellationRequested)
@@ -123,27 +133,17 @@ public sealed class DifyExternalRagAdapter : IExternalRagAdapter
                 diagnosticDetails: "The provider request failed at the HTTP transport layer.",
                 warnings: ["Dify external RAG provider is unavailable."]);
         }
-        catch (JsonException)
+        catch (IOException)
         {
             return DifyExternalRagMapper.CreateFailureResponse(
                 request,
                 _options,
-                providerStatus: "malformed-response",
-                errorCode: "dify_malformed_response",
-                errorMessage: "Dify external RAG provider returned a malformed response.",
-                diagnosticDetails: "The provider response could not be parsed as the expected JSON shape.",
-                warnings: ["Dify external RAG provider returned a malformed response."]);
+                providerStatus: "stream-read-error",
+                errorCode: "dify_stream_read_error",
+                errorMessage: "Dify external RAG provider stream could not be read.",
+                diagnosticDetails: "The provider response failed while reading the SSE stream.",
+                warnings: ["Dify external RAG provider stream could not be read."]);
         }
-    }
-
-    private Uri? CreateEndpoint()
-    {
-        if (!Uri.TryCreate(_options.Endpoint, UriKind.Absolute, out var endpoint))
-        {
-            return null;
-        }
-
-        return endpoint;
     }
 
     private CancellationTokenSource? CreateTimeoutTokenSource()

@@ -127,6 +127,49 @@ internal static class DifyExternalRagMapper
                 retrievedContextItems.Length));
     }
 
+    public static ExternalRagAdapterResponse CreateStreamingResponse(
+        ExternalRagAdapterRequest request,
+        DifyAgentSseParseResult streamResult,
+        DifyExternalRagOptions options)
+    {
+        var providerStatus = streamResult.IsComplete ? "stream-complete" : "stream-incomplete";
+        if (string.IsNullOrWhiteSpace(streamResult.Answer))
+        {
+            return CreateFailureResponse(
+                request,
+                options,
+                providerStatus,
+                errorCode: "dify_empty_stream_response",
+                errorMessage: "Dify external RAG provider stream did not contain an answer.",
+                diagnosticDetails: "The SSE stream did not produce a usable agent_message answer fragment.",
+                warnings: CreateStreamingWarnings(
+                    streamResult,
+                    "Dify external RAG provider stream did not contain an answer."));
+        }
+
+        var metadata = CreateStreamingMetadata(request, streamResult, options, providerStatus);
+        var warnings = CreateStreamingWarnings(
+            streamResult,
+            "Dify Agent SSE answer was received; structured answer parsing is handled by a later adapter task.");
+        const RetrievedContextState retrievedContextState = RetrievedContextState.Unavailable;
+
+        return new ExternalRagAdapterResponse(
+            Status: ExternalRagAdapterResponseStatus.Partial,
+            ImpactMap: CreateStreamingIntermediateImpactMap(streamResult),
+            Metadata: metadata,
+            RetrievedContextState: retrievedContextState,
+            RetrievedContextItems: [],
+            Warnings: warnings,
+            Errors: [],
+            SanitizedDiagnosticSnapshot: CreateDiagnosticSnapshot(
+                request.CorrelationId,
+                ExternalRagAdapterResponseStatus.Partial,
+                metadata,
+                providerStatus,
+                retrievedContextState,
+                retrievedContextItemCount: 0));
+    }
+
     public static ExternalRagAdapterResponse CreateUnavailableConfigurationResponse(
         ExternalRagAdapterRequest request,
         DifyExternalRagOptions options,
@@ -248,6 +291,86 @@ internal static class DifyExternalRagMapper
                 ["providerStatus"] = NormalizeProviderStatusForDiagnostics(providerStatus),
                 ["responseShape"] = "unavailable"
             });
+
+    private static ExternalRagAdapterResponseMetadata CreateStreamingMetadata(
+        ExternalRagAdapterRequest request,
+        DifyAgentSseParseResult streamResult,
+        DifyExternalRagOptions options,
+        string providerStatus)
+    {
+        var sanitizedProperties = new Dictionary<string, string>
+        {
+            ["providerStatus"] = NormalizeProviderStatusForDiagnostics(providerStatus),
+            ["responseShape"] = "dify-agent-sse-intermediate",
+            ["streamComplete"] = streamResult.IsComplete ? bool.TrueString.ToLowerInvariant() : bool.FalseString.ToLowerInvariant(),
+            ["answerFragmentCount"] = streamResult.AnswerFragments.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["hasMalformedEvents"] = streamResult.HasMalformedEvents ? bool.TrueString.ToLowerInvariant() : bool.FalseString.ToLowerInvariant(),
+            ["agentThoughtEventCount"] = streamResult.AgentThoughtEventCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["unknownEventCount"] = streamResult.UnknownEventCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        };
+
+        if (!string.IsNullOrWhiteSpace(streamResult.MessageEndMetadata?.MessageId))
+        {
+            sanitizedProperties["messageId"] = streamResult.MessageEndMetadata.MessageId;
+        }
+
+        if (!string.IsNullOrWhiteSpace(streamResult.MessageEndMetadata?.ConversationId))
+        {
+            sanitizedProperties["conversationId"] = streamResult.MessageEndMetadata.ConversationId;
+        }
+
+        foreach (var usageEntry in streamResult.MessageEndMetadata?.Usage ?? new Dictionary<string, string>())
+        {
+            sanitizedProperties[$"usage.{usageEntry.Key}"] = usageEntry.Value;
+        }
+
+        return new ExternalRagAdapterResponseMetadata(
+            ProviderName: ProviderName,
+            AdapterName: AdapterName,
+            ModelName: null,
+            WorkflowName: NormalizeOptional(options.WorkflowOrAppId),
+            ProfileName: NormalizeOptional(request.ExecutionMetadata.RequestedProfileName) ??
+                NormalizeOptional(options.ProfileName),
+            SanitizedProperties: sanitizedProperties);
+    }
+
+    private static ImpactMap CreateStreamingIntermediateImpactMap(DifyAgentSseParseResult streamResult)
+    {
+        var impactMap = new ImpactMap();
+        impactMap.ChangeSummary.Title = "Dify Agent streaming answer received";
+        impactMap.ChangeSummary.Description =
+            "The adapter received a streaming Agent answer through the Dify Service API. Structured answer parsing is not part of this task.";
+        impactMap.ChangeSummary.Severity = ImpactSeverity.NotSpecified;
+        impactMap.ChangeSummary.Notes = $"SSE answer fragments received: {streamResult.AnswerFragments.Count}.";
+
+        impactMap.PreliminaryAssessment.Title = "Requires structured mapping in the next adapter task";
+        impactMap.PreliminaryAssessment.Description =
+            "This intermediate adapter result confirms HTTP streaming integration only and is not an expert conclusion.";
+        impactMap.PreliminaryAssessment.Severity = ImpactSeverity.NotSpecified;
+
+        return impactMap;
+    }
+
+    private static IReadOnlyList<string> CreateStreamingWarnings(
+        DifyAgentSseParseResult streamResult,
+        string adapterWarning)
+    {
+        var warnings = streamResult.Warnings
+            .Where(warning => !string.IsNullOrWhiteSpace(warning))
+            .Select(warning => warning.Trim())
+            .ToList();
+
+        warnings.Add(adapterWarning);
+
+        if (streamResult.IsComplete)
+        {
+            warnings.Add("Dify Agent SSE stream did not provide retrieved context mapping in this adapter task.");
+        }
+
+        return warnings
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
 
     private static ImpactMap MapImpactMap(DifyImpactMapDto source)
     {
@@ -484,6 +607,9 @@ internal static class DifyExternalRagMapper
             "timeout" or
             "transport-error" or
             "malformed-response" or
+            "stream-complete" or
+            "stream-incomplete" or
+            "stream-read-error" or
             "disabled" or
             "configuration-unavailable" => safeStatus,
             _ => "unknown"
