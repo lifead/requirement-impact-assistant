@@ -493,6 +493,72 @@ public sealed class DifyExternalRagAdapterTests
     }
 
     [Fact]
+    public async Task AnalyzeAsync_WhenStreamDiagnosticsContainSensitiveMetadata_SanitizesDiagnosticsAndWarnings()
+    {
+        var agentMessage = JsonSerializer.Serialize(new
+        {
+            @event = "agent_message",
+            answer = CreateStructuredAnswer("Sensitive metadata impact")
+        });
+        var messageEnd = JsonSerializer.Serialize(new
+        {
+            @event = "message_end",
+            message_id = "Bearer synthetic-message-token",
+            conversation_id = "https://dify.invalid/private-conversation",
+            metadata = new
+            {
+                usage = new Dictionary<string, object?>
+                {
+                    ["total_tokens"] = 11,
+                    ["api_key"] = "synthetic-usage-key",
+                    ["session"] = "synthetic-session-value"
+                }
+            }
+        });
+        var handler = new CapturingHandler(_ => CreateSseResponse(
+            HttpStatusCode.OK,
+            string.Join(Environment.NewLine, $"data: {agentMessage}", $"data: {messageEnd}", string.Empty)));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
+        Assert.False(response.Metadata.SanitizedProperties.ContainsKey("messageId"));
+        Assert.False(response.Metadata.SanitizedProperties.ContainsKey("conversationId"));
+        Assert.Equal("11", response.Metadata.SanitizedProperties["usage.total_tokens"]);
+        Assert.DoesNotContain(
+            response.Metadata.SanitizedProperties,
+            property => property.Key.Contains("api", StringComparison.OrdinalIgnoreCase) ||
+                property.Key.Contains("session", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("unsafe diagnostic content", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("unsafe key", StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotNull(response.SanitizedDiagnosticSnapshot);
+        using var diagnosticDocument = JsonDocument.Parse(response.SanitizedDiagnosticSnapshot);
+        var diagnosticRoot = diagnosticDocument.RootElement;
+        Assert.Equal("completedWithWarnings", diagnosticRoot.GetProperty("status").GetString());
+        Assert.Equal(JsonValueKind.Null, diagnosticRoot.GetProperty("messageId").ValueKind);
+        Assert.Equal(JsonValueKind.Null, diagnosticRoot.GetProperty("conversationId").ValueKind);
+        Assert.Equal("11", diagnosticRoot.GetProperty("usage").GetProperty("total_tokens").GetString());
+        AssertSanitized(
+            response,
+            [
+                TestApiKey,
+                "https://dify.invalid",
+                "Authorization",
+                "Bearer",
+                "synthetic-message-token",
+                "private-conversation",
+                "synthetic-usage-key",
+                "synthetic-session-value"
+            ]);
+    }
+
+    [Fact]
     public async Task AnalyzeAsync_WhenDifyOptionsAreDisabled_ReturnsSanitizedUnavailableResponseWithoutHttpCall()
     {
         var handler = new CapturingHandler(_ => throw new InvalidOperationException("HTTP should not be called."));

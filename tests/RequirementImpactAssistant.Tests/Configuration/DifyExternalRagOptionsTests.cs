@@ -198,6 +198,35 @@ public sealed class DifyExternalRagOptionsTests
     }
 
     [Fact]
+    public void ApplicationAnalysisRegistration_DisabledDifyConfigurationKeepsMockExternalAdapter()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiAnalysis:Provider"] = LlmProviderNames.Demo,
+                ["ExternalRag:Dify:Enabled"] = "false",
+                ["ExternalRag:Dify:Endpoint"] = new UriBuilder(Uri.UriSchemeHttps, "dify.invalid").Uri.ToString(),
+                ["ExternalRag:Dify:WorkflowOrAppId"] = "workflow-placeholder",
+                ["ExternalRag:Dify:ApiKey"] = NonSecretConfigurationValue
+            })
+            .Build();
+        var services = new ServiceCollection();
+
+        services.AddApplicationAnalysis(configuration);
+
+        using var serviceProvider = services.BuildServiceProvider();
+
+        var options = serviceProvider.GetRequiredService<IOptions<DifyExternalRagOptions>>().Value;
+        var status = options.GetConfigurationStatus();
+        var externalAdapter = serviceProvider.GetRequiredService<IExternalRagAdapter>();
+
+        Assert.False(options.Enabled);
+        Assert.False(options.IsConfigured);
+        Assert.False(status.IsUnavailable);
+        Assert.IsType<MockExternalRagAdapter>(externalAdapter);
+    }
+
+    [Fact]
     public void ApplicationAnalysisRegistration_MissingDifySectionLeavesOptionsDisabled()
     {
         var configuration = new ConfigurationBuilder()

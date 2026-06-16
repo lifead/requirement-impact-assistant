@@ -98,6 +98,41 @@ public sealed class ApplicationConfigurationTests
     }
 
     [Fact]
+    public async Task DevelopmentAnalysisConfiguration_RunsDefaultEnginesOfflineWithoutSecrets()
+    {
+        var configuration = CreateApplicationConfiguration();
+        var services = new ServiceCollection();
+
+        services.AddApplicationAnalysis(configuration);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+        var provider = scope.ServiceProvider.GetRequiredService<ILlmProvider>();
+        var selector = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngineSelector>();
+        var externalAdapter = scope.ServiceProvider.GetRequiredService<IExternalRagAdapter>();
+        var directResponse = await selector
+            .Select(AnalysisMode.DirectLlm)
+            .AnalyzeAsync(CreateAnalysisRequest());
+        var externalResponse = await selector
+            .Select(AnalysisMode.ExternalRag)
+            .AnalyzeAsync(CreateAnalysisRequest());
+
+        Assert.IsType<DemoLlmProvider>(provider);
+        Assert.IsType<MockExternalRagAdapter>(externalAdapter);
+        Assert.Equal(AiAnalysisResponseStatus.Succeeded, directResponse.Status);
+        Assert.Contains("No external provider, network, SDK, or secret is used.", directResponse.RawResponse);
+        Assert.Empty(directResponse.Errors);
+        Assert.Equal(AiAnalysisResponseStatus.Succeeded, externalResponse.Status);
+        Assert.NotNull(externalResponse.ResultMetadata);
+        Assert.Equal("LocalMockKnowledgeSource", externalResponse.ResultMetadata.ProviderName);
+        Assert.Equal(nameof(MockExternalRagAdapter), externalResponse.ResultMetadata.AdapterName);
+        Assert.DoesNotContain("DeepSeek API key is not configured.", directResponse.Errors);
+        Assert.DoesNotContain(
+            externalResponse.Errors,
+            error => error.Contains("Dify", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public void ApplicationAnalysisRegistration_ConfiguredDifyKeepsDirectLlmDefault()
     {
         var configuration = new ConfigurationBuilder()

@@ -126,6 +126,36 @@ public sealed class DifyAgentAnswerJsonParserTests
         Assert.DoesNotContain("dify.invalid/private", serializedResult, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Parse_WhenJsonLikeRawFallbackContainsSecretProperties_RedactsRawText()
+    {
+        const string answer = """
+            {
+              "answer": "not expected shape",
+              "apiKey": "synthetic-json-key",
+              "password": "synthetic-json-password",
+              "cookie": "synthetic-json-cookie",
+              "csrf": "synthetic-json-csrf",
+              "serviceUrl": "https://dify.invalid/private"
+            }
+            """;
+
+        var result = DifyAgentAnswerJsonParser.Parse(answer);
+
+        Assert.False(result.HasStructuredJson);
+        Assert.Equal(DifyAgentAnswerParseMode.RawTextFallback, result.ParseMode);
+        Assert.NotNull(result.SanitizedRawText);
+        Assert.Contains("[REDACTED]", result.SanitizedRawText);
+        Assert.Contains("[REDACTED_URL]", result.SanitizedRawText);
+
+        var serializedResult = JsonSerializer.Serialize(result);
+        Assert.DoesNotContain("synthetic-json-key", serializedResult, StringComparison.Ordinal);
+        Assert.DoesNotContain("synthetic-json-password", serializedResult, StringComparison.Ordinal);
+        Assert.DoesNotContain("synthetic-json-cookie", serializedResult, StringComparison.Ordinal);
+        Assert.DoesNotContain("synthetic-json-csrf", serializedResult, StringComparison.Ordinal);
+        Assert.DoesNotContain("https://dify.invalid/private", serializedResult, StringComparison.Ordinal);
+    }
+
     private static string CreateStructuredAnswer(string changeSummary, string preliminaryAssessment) =>
         $$"""
           {
