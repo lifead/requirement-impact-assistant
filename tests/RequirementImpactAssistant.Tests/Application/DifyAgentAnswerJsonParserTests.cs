@@ -42,16 +42,7 @@ public sealed class DifyAgentAnswerJsonParserTests
     [Fact]
     public void Parse_WhenAnswerWrapsJson_UsesJsonSubstringFallback()
     {
-        var answer = """
-            Agent response:
-            {
-              "changeSummary": "Wrapped JSON",
-              "affectedRequirements": [],
-              "preliminaryAssessment": "Usable after fallback",
-              "warnings": []
-            }
-            End.
-            """;
+        var answer = $"Agent response:{Environment.NewLine}{CreateStructuredAnswer("Wrapped JSON", "Usable after fallback")}{Environment.NewLine}End.";
 
         var result = DifyAgentAnswerJsonParser.Parse(answer);
 
@@ -62,6 +53,22 @@ public sealed class DifyAgentAnswerJsonParserTests
         Assert.Null(result.SanitizedRawText);
         Assert.Contains(
             "Dify Agent answer contained non-JSON wrapper text; JSON substring fallback was used.",
+            result.Warnings);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"answer\":\"not the expected structured shape\"}")]
+    public void Parse_WhenJsonObjectDoesNotMatchExpectedShape_ReturnsSanitizedRawTextFallback(string answer)
+    {
+        var result = DifyAgentAnswerJsonParser.Parse(answer);
+
+        Assert.False(result.HasStructuredJson);
+        Assert.Equal(DifyAgentAnswerParseMode.RawTextFallback, result.ParseMode);
+        Assert.Null(result.StructuredAnswer);
+        Assert.Equal(answer, result.SanitizedRawText);
+        Assert.Contains(
+            "Dify Agent answer JSON did not match the expected structured answer shape; sanitized raw answer text was retained as fallback.",
             result.Warnings);
     }
 
@@ -90,6 +97,7 @@ public sealed class DifyAgentAnswerJsonParserTests
         const string answer =
             "Use apiKey=synthetic-key, Authorization: Bearer synthetic-token, cookie=session-value, " +
             "csrf=csrf-value, sessionId=session-id, auth=auth-assignment, auth: auth-colon, " +
+            "key=generic-key-assignment, key: generic-key-colon, " +
             "session=session-assignment, password=password-assignment, password: password-colon, " +
             "https://dify.invalid/v1/chat-messages and dify.invalid/private";
 
@@ -109,10 +117,33 @@ public sealed class DifyAgentAnswerJsonParserTests
         Assert.DoesNotContain("session-id", serializedResult, StringComparison.Ordinal);
         Assert.DoesNotContain("auth-assignment", serializedResult, StringComparison.Ordinal);
         Assert.DoesNotContain("auth-colon", serializedResult, StringComparison.Ordinal);
+        Assert.DoesNotContain("generic-key-assignment", serializedResult, StringComparison.Ordinal);
+        Assert.DoesNotContain("generic-key-colon", serializedResult, StringComparison.Ordinal);
         Assert.DoesNotContain("session-assignment", serializedResult, StringComparison.Ordinal);
         Assert.DoesNotContain("password-assignment", serializedResult, StringComparison.Ordinal);
         Assert.DoesNotContain("password-colon", serializedResult, StringComparison.Ordinal);
         Assert.DoesNotContain("https://dify.invalid", serializedResult, StringComparison.Ordinal);
         Assert.DoesNotContain("dify.invalid/private", serializedResult, StringComparison.Ordinal);
     }
+
+    private static string CreateStructuredAnswer(string changeSummary, string preliminaryAssessment) =>
+        $$"""
+          {
+            "changeSummary": "{{changeSummary}}",
+            "affectedRequirements": [],
+            "affectedTasks": [],
+            "affectedProjectDecisions": [],
+            "affectedApiInterfacesDocumentsTests": [],
+            "affectedArchitecturalConstraints": [],
+            "affectedOrganizationalContextItems": [],
+            "contradictions": [],
+            "missingInformation": [],
+            "clarificationQuestions": [],
+            "risks": [],
+            "optionsForExpertReview": [],
+            "preliminaryAssessment": "{{preliminaryAssessment}}",
+            "usedSources": [],
+            "warnings": []
+          }
+          """;
 }

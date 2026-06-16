@@ -8,9 +8,25 @@ internal static class DifyAgentAnswerJsonParser
 {
     private const int MaxSanitizedRawTextLength = 4000;
     private const string SensitiveKeyPattern =
-        @"(?:apiKey|api[-_\s]*key|accessToken|refreshToken|authToken|auth|token|password|pass[-_\s]*word|secret|cookie|csrf|sessionId|session[-_\s]*id|session)";
+        @"(?:apiKey|api[-_\s]*key|key|accessToken|refreshToken|authToken|auth|token|password|pass[-_\s]*word|secret|cookie|csrf|sessionId|session[-_\s]*id|session)";
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly string[] ExpectedCollectionPropertyNames =
+    [
+        "affectedRequirements",
+        "affectedTasks",
+        "affectedProjectDecisions",
+        "affectedApiInterfacesDocumentsTests",
+        "affectedArchitecturalConstraints",
+        "affectedOrganizationalContextItems",
+        "contradictions",
+        "missingInformation",
+        "clarificationQuestions",
+        "risks",
+        "optionsForExpertReview",
+        "usedSources",
+        "warnings"
+    ];
     private static readonly Regex BearerTokenPattern = new(
         @"\bbearer\s+[A-Za-z0-9._~+\-/]+=*",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
@@ -52,7 +68,7 @@ internal static class DifyAgentAnswerJsonParser
         }
 
         var normalizedAnswer = answerText.Trim();
-        if (TryParseStructuredAnswer(normalizedAnswer, out var structuredAnswer))
+        if (TryParseStructuredAnswer(normalizedAnswer, out var structuredAnswer, out var invalidShapeWarning))
         {
             return new DifyAgentAnswerParseResult(
                 StructuredAnswer: structuredAnswer,
@@ -62,7 +78,9 @@ internal static class DifyAgentAnswerJsonParser
         }
 
         var fallbackJson = ExtractObjectSubstring(normalizedAnswer);
-        if (fallbackJson is not null && TryParseStructuredAnswer(fallbackJson, out structuredAnswer))
+        string? fallbackInvalidShapeWarning = null;
+        if (fallbackJson is not null &&
+            TryParseStructuredAnswer(fallbackJson, out structuredAnswer, out fallbackInvalidShapeWarning))
         {
             return new DifyAgentAnswerParseResult(
                 StructuredAnswer: structuredAnswer,
@@ -75,6 +93,11 @@ internal static class DifyAgentAnswerJsonParser
         {
             "Dify Agent answer could not be parsed as JSON; sanitized raw answer text was retained as fallback."
         };
+        if (invalidShapeWarning is not null || fallbackInvalidShapeWarning is not null)
+        {
+            warnings.Add(invalidShapeWarning ?? fallbackInvalidShapeWarning!);
+        }
+
         if (fallbackJson is null)
         {
             warnings.Add("Dify Agent answer did not contain a complete JSON object boundary.");
@@ -87,9 +110,13 @@ internal static class DifyAgentAnswerJsonParser
             Warnings: warnings.ToArray());
     }
 
-    private static bool TryParseStructuredAnswer(string answerText, out DifyAgentAnswerDto? structuredAnswer)
+    private static bool TryParseStructuredAnswer(
+        string answerText,
+        out DifyAgentAnswerDto? structuredAnswer,
+        out string? invalidShapeWarning)
     {
         structuredAnswer = null;
+        invalidShapeWarning = null;
 
         try
         {
@@ -100,13 +127,51 @@ internal static class DifyAgentAnswerJsonParser
             }
 
             structuredAnswer = JsonSerializer.Deserialize<DifyAgentAnswerDto>(answerText, JsonOptions);
-            return structuredAnswer is not null;
+            if (structuredAnswer is null)
+            {
+                return false;
+            }
+
+            if (!HasExpectedStructuredShape(document.RootElement))
+            {
+                structuredAnswer = null;
+                invalidShapeWarning =
+                    "Dify Agent answer JSON did not match the expected structured answer shape; sanitized raw answer text was retained as fallback.";
+                return false;
+            }
+
+            return true;
         }
         catch (JsonException)
         {
             return false;
         }
     }
+
+    private static bool HasExpectedStructuredShape(JsonElement root)
+    {
+        if (!HasStringProperty(root, "changeSummary") ||
+            !HasStringProperty(root, "preliminaryAssessment"))
+        {
+            return false;
+        }
+
+        foreach (var collectionPropertyName in ExpectedCollectionPropertyNames)
+        {
+            if (!root.TryGetProperty(collectionPropertyName, out var property) ||
+                property.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool HasStringProperty(JsonElement root, string propertyName) =>
+        root.TryGetProperty(propertyName, out var property) &&
+        property.ValueKind == JsonValueKind.String &&
+        !string.IsNullOrWhiteSpace(property.GetString());
 
     private static string? ExtractObjectSubstring(string answerText)
     {

@@ -6,6 +6,7 @@ using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Application.Analysis.External;
 using RequirementImpactAssistant.Web.Application.Analysis.External.Dify;
 using RequirementImpactAssistant.Web.Domain.Enums;
+using RequirementImpactAssistant.Web.Domain.Impact;
 
 namespace RequirementImpactAssistant.Tests.Application;
 
@@ -16,12 +17,48 @@ public sealed class DifyExternalRagAdapterTests
     [Fact]
     public async Task AnalyzeAsync_SendsAgentStreamingRequestThroughFakeHttpAndParsesAgentAnswerJson()
     {
-        var handler = new CapturingHandler(_ => CreateSseResponse(HttpStatusCode.OK, """
-            data: {"event":"agent_message","answer":"{\"changeSummary\":\""}
-            data: {"event":"agent_message","answer":"Gateway migration\"}"}
-            data: {"event":"message_end","message_id":"msg-123","conversation_id":"conv-456","metadata":{"usage":{"prompt_tokens":12,"completion_tokens":5,"total_tokens":17}}}
-
-            """));
+        var answer = """
+            {
+              "changeSummary": "Gateway migration impact",
+              "affectedRequirements": [
+                {
+                  "title": "Storage code validation",
+                  "description": "Requirement text must mention non-empty storage code validation.",
+                  "severity": "High",
+                  "notes": "Check requirement wording.",
+                  "relatedContextFragmentIds": ["11111111-1111-1111-1111-111111111111"]
+                }
+              ],
+              "affectedTasks": ["Update API validation task"],
+              "affectedProjectDecisions": [],
+              "affectedApiInterfacesDocumentsTests": [
+                {
+                  "title": "POST /bins contract",
+                  "description": "API documents and tests should cover blank code rejection.",
+                  "severity": "Medium"
+                }
+              ],
+              "affectedArchitecturalConstraints": [],
+              "affectedOrganizationalContextItems": [],
+              "contradictions": [],
+              "missingInformation": ["Confirm accepted error message."],
+              "clarificationQuestions": ["Should whitespace-only values be rejected?"],
+              "risks": [
+                {
+                  "title": "Validation regression",
+                  "description": "Existing clients may rely on permissive input.",
+                  "severity": "Medium"
+                }
+              ],
+              "optionsForExpertReview": ["Approve validation scope"],
+              "preliminaryAssessment": "Requires expert review",
+              "usedSources": ["requirements-demo"],
+              "warnings": []
+            }
+            """;
+        var handler = new CapturingHandler(_ => CreateSseResponse(
+            HttpStatusCode.OK,
+            CreateCompleteSsePayload(answer, "msg-123", "conv-456", totalTokens: 17)));
         var adapter = CreateAdapter(handler);
 
         var response = await adapter.AnalyzeAsync(CreateRequest());
@@ -48,15 +85,29 @@ public sealed class DifyExternalRagAdapterTests
         Assert.DoesNotContain("manual_context", handler.LastRequestBody, StringComparison.Ordinal);
         Assert.DoesNotContain(TestApiKey, handler.LastRequestBody, StringComparison.Ordinal);
 
-        Assert.Equal(ExternalRagAdapterResponseStatus.Partial, response.Status);
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
         Assert.NotNull(response.ImpactMap);
-        Assert.Equal("Dify Agent structured answer parsed", response.ImpactMap.ChangeSummary.Title);
+        Assert.Equal("Gateway migration impact", response.ImpactMap.ChangeSummary.Title);
+        Assert.Contains("preliminary analytical material", response.ImpactMap.ChangeSummary.Notes, StringComparison.Ordinal);
+        var affectedRequirement = Assert.Single(response.ImpactMap.AffectedRequirements);
+        Assert.Equal("Storage code validation", affectedRequirement.Title);
+        Assert.Equal("Requirement text must mention non-empty storage code validation.", affectedRequirement.Description);
+        Assert.Equal(ImpactSeverity.High, affectedRequirement.Severity);
+        Assert.Equal(Guid.Parse("11111111-1111-1111-1111-111111111111"), Assert.Single(affectedRequirement.RelatedContextFragmentIds));
+        Assert.Equal("Update API validation task", Assert.Single(response.ImpactMap.AffectedTasks).Title);
+        Assert.Equal("POST /bins contract", Assert.Single(response.ImpactMap.AffectedApiInterfacesDocumentsTests).Title);
+        Assert.Equal("Confirm accepted error message.", Assert.Single(response.ImpactMap.MissingInformation).Title);
+        Assert.Equal("Should whitespace-only values be rejected?", Assert.Single(response.ImpactMap.ClarificationQuestions).Title);
+        Assert.Equal("Validation regression", Assert.Single(response.ImpactMap.Risks).Title);
+        Assert.Equal("Approve validation scope", Assert.Single(response.ImpactMap.OptionsForExpertReview).Title);
+        Assert.Equal("Requires expert review", response.ImpactMap.PreliminaryAssessment.Title);
+        Assert.Contains("preliminary analytical material", response.ImpactMap.PreliminaryAssessment.Notes, StringComparison.Ordinal);
         Assert.Empty(response.Errors);
         Assert.Equal(RetrievedContextState.Unavailable, response.RetrievedContextState);
         Assert.Empty(response.RetrievedContextItems);
         Assert.Contains(
             response.Warnings,
-            warning => warning.Contains("structured response mapping", StringComparison.OrdinalIgnoreCase));
+            warning => warning.Contains("without retrieved context resources", StringComparison.OrdinalIgnoreCase));
 
         Assert.Equal("Dify", response.Metadata.ProviderName);
         Assert.Equal(nameof(DifyExternalRagAdapter), response.Metadata.AdapterName);
@@ -64,12 +115,14 @@ public sealed class DifyExternalRagAdapterTests
         Assert.Equal("workflow-from-options", response.Metadata.WorkflowName);
         Assert.Equal("research-profile", response.Metadata.ProfileName);
         Assert.Equal("stream-complete", response.Metadata.SanitizedProperties["providerStatus"]);
-        Assert.Equal("dify-agent-sse-intermediate", response.Metadata.SanitizedProperties["responseShape"]);
+        Assert.Equal("dify-agent-answer-json", response.Metadata.SanitizedProperties["responseShape"]);
         Assert.Equal("true", response.Metadata.SanitizedProperties["streamComplete"]);
-        Assert.Equal("2", response.Metadata.SanitizedProperties["answerFragmentCount"]);
+        Assert.Equal("1", response.Metadata.SanitizedProperties["answerFragmentCount"]);
         Assert.Equal("parsed-json", response.Metadata.SanitizedProperties["answerParseStatus"]);
         Assert.Equal("full-answer-json", response.Metadata.SanitizedProperties["answerParseMode"]);
+        Assert.Equal("completedWithWarnings", response.Metadata.SanitizedProperties["adapterResponseStatus"]);
         Assert.Equal("false", response.Metadata.SanitizedProperties["rawAnswerFallbackRetained"]);
+        Assert.Equal("1", response.Metadata.SanitizedProperties["usedSourceCount"]);
         Assert.Equal("msg-123", response.Metadata.SanitizedProperties["messageId"]);
         Assert.Equal("conv-456", response.Metadata.SanitizedProperties["conversationId"]);
         Assert.Equal("17", response.Metadata.SanitizedProperties["usage.total_tokens"]);
@@ -77,13 +130,151 @@ public sealed class DifyExternalRagAdapterTests
         Assert.NotNull(response.SanitizedDiagnosticSnapshot);
         using var diagnosticDocument = JsonDocument.Parse(response.SanitizedDiagnosticSnapshot);
         var diagnosticRoot = diagnosticDocument.RootElement;
-        Assert.Equal("partial", diagnosticRoot.GetProperty("status").GetString());
+        Assert.Equal("completedWithWarnings", diagnosticRoot.GetProperty("status").GetString());
         Assert.Equal("stream-complete", diagnosticRoot.GetProperty("providerStatus").GetString());
+        Assert.Equal("dify-agent-answer-json", diagnosticRoot.GetProperty("responseShape").GetString());
+        Assert.Equal("msg-123", diagnosticRoot.GetProperty("messageId").GetString());
+        Assert.Equal("conv-456", diagnosticRoot.GetProperty("conversationId").GetString());
+        Assert.Equal("https", diagnosticRoot.GetProperty("endpoint").GetProperty("scheme").GetString());
+        Assert.Equal("dify.invalid", diagnosticRoot.GetProperty("endpoint").GetProperty("host").GetString());
+        Assert.Equal("/v1/chat-messages", diagnosticRoot.GetProperty("endpoint").GetProperty("path").GetString());
+        Assert.Equal("17", diagnosticRoot.GetProperty("usage").GetProperty("total_tokens").GetString());
         Assert.Equal("Unavailable", diagnosticRoot.GetProperty("retrievedContextState").GetString());
         Assert.Equal(0, diagnosticRoot.GetProperty("retrievedContextItemCount").GetInt32());
+        Assert.Contains(
+            diagnosticRoot.GetProperty("warnings").EnumerateArray(),
+            warning => warning.GetString()?.Contains("without retrieved context resources", StringComparison.OrdinalIgnoreCase) == true);
+        Assert.Empty(diagnosticRoot.GetProperty("errors").EnumerateArray());
         AssertSanitized(
             response,
-            [TestApiKey, "https://dify.invalid", "Authorization", "Bearer", "Gateway migration"]);
+            [TestApiKey, "https://dify.invalid", "Authorization", "Bearer"]);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WhenStructuredAnswerArrivesOnIncompleteStream_ReturnsPartialMappedResponse()
+    {
+        var answer = """
+            {
+              "changeSummary": "Partial structured impact",
+              "affectedRequirements": ["Storage code requirement"],
+              "affectedTasks": [],
+              "affectedProjectDecisions": [],
+              "affectedApiInterfacesDocumentsTests": [],
+              "affectedArchitecturalConstraints": [],
+              "affectedOrganizationalContextItems": [],
+              "contradictions": [],
+              "missingInformation": [],
+              "clarificationQuestions": [],
+              "risks": [],
+              "optionsForExpertReview": [],
+              "preliminaryAssessment": "Needs expert review",
+              "usedSources": [],
+              "warnings": []
+            }
+            """;
+        var agentMessage = JsonSerializer.Serialize(new
+        {
+            @event = "agent_message",
+            answer
+        });
+        var handler = new CapturingHandler(_ => CreateSseResponse(
+            HttpStatusCode.OK,
+            $"data: {agentMessage}{Environment.NewLine}"));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.Partial, response.Status);
+        Assert.NotNull(response.ImpactMap);
+        Assert.Equal("Partial structured impact", response.ImpactMap.ChangeSummary.Title);
+        Assert.Equal("Storage code requirement", Assert.Single(response.ImpactMap.AffectedRequirements).Title);
+        Assert.Equal("Needs expert review", response.ImpactMap.PreliminaryAssessment.Title);
+        Assert.Empty(response.Errors);
+        Assert.Contains("message_end", string.Join(" ", response.Warnings), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("dify-agent-answer-json", response.Metadata.SanitizedProperties["responseShape"]);
+        Assert.Equal("partial", response.Metadata.SanitizedProperties["adapterResponseStatus"]);
+        Assert.Equal("parsed-json", response.Metadata.SanitizedProperties["answerParseStatus"]);
+        Assert.Equal("false", response.Metadata.SanitizedProperties["streamComplete"]);
+        Assert.Equal("false", response.Metadata.SanitizedProperties["rawAnswerFallbackRetained"]);
+
+        Assert.NotNull(response.SanitizedDiagnosticSnapshot);
+        using var diagnosticDocument = JsonDocument.Parse(response.SanitizedDiagnosticSnapshot);
+        var diagnosticRoot = diagnosticDocument.RootElement;
+        Assert.Equal("partial", diagnosticRoot.GetProperty("status").GetString());
+        Assert.Equal("stream-incomplete", diagnosticRoot.GetProperty("providerStatus").GetString());
+        Assert.Contains(
+            diagnosticRoot.GetProperty("warnings").EnumerateArray(),
+            warning => warning.GetString()?.Contains("message_end", StringComparison.OrdinalIgnoreCase) == true);
+        AssertSanitized(response, [TestApiKey, "https://dify.invalid", "Authorization", "Bearer"]);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WhenStructuredAnswerContainsProviderWarnings_ReturnsCompletedWithSanitizedWarnings()
+    {
+        var answer = """
+            {
+              "changeSummary": "Warning structured impact apiKey=synthetic-key",
+              "affectedRequirements": [],
+              "affectedTasks": [],
+              "affectedProjectDecisions": [],
+              "affectedApiInterfacesDocumentsTests": [],
+              "affectedArchitecturalConstraints": [],
+              "affectedOrganizationalContextItems": [],
+              "contradictions": [],
+              "missingInformation": [],
+              "clarificationQuestions": [],
+              "risks": [],
+              "optionsForExpertReview": [],
+              "preliminaryAssessment": "Needs expert review",
+              "usedSources": [],
+              "warnings": ["Provider warning with cookie=session-value csrf=csrf-value password=password-value session=session-value auth=auth-assignment auth: auth-colon key=synthetic-key key: synthetic-key-colon Authorization: Bearer synthetic-token dify.invalid/private"]
+            }
+            """;
+        var handler = new CapturingHandler(_ => CreateSseResponse(
+            HttpStatusCode.OK,
+            CreateCompleteSsePayload(answer, "msg-warning", "conv-warning", totalTokens: 21)));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
+        Assert.NotNull(response.ImpactMap);
+        Assert.Equal("Warning structured impact [REDACTED]", response.ImpactMap.ChangeSummary.Title);
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("Dify provider warning was redacted", StringComparison.Ordinal));
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("without retrieved context resources", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("completedWithWarnings", response.Metadata.SanitizedProperties["adapterResponseStatus"]);
+
+        Assert.NotNull(response.SanitizedDiagnosticSnapshot);
+        using var diagnosticDocument = JsonDocument.Parse(response.SanitizedDiagnosticSnapshot);
+        var diagnosticRoot = diagnosticDocument.RootElement;
+        Assert.Equal("completedWithWarnings", diagnosticRoot.GetProperty("status").GetString());
+        Assert.Equal("msg-warning", diagnosticRoot.GetProperty("messageId").GetString());
+        Assert.Equal("conv-warning", diagnosticRoot.GetProperty("conversationId").GetString());
+        Assert.Contains(
+            "Dify provider warning was redacted",
+            string.Join(" ", diagnosticRoot.GetProperty("warnings").EnumerateArray().Select(warning => warning.GetString())),
+            StringComparison.Ordinal);
+        AssertSanitized(
+            response,
+            [
+                TestApiKey,
+                "https://dify.invalid",
+                "Authorization",
+                "Bearer",
+                "synthetic-key",
+                "synthetic-token",
+                "session-value",
+                "csrf-value",
+                "password-value",
+                "auth-assignment",
+                "auth-colon",
+                "synthetic-key-colon",
+                "dify.invalid/private"
+            ]);
     }
 
     [Fact]
@@ -176,7 +367,7 @@ public sealed class DifyExternalRagAdapterTests
 
         Assert.Equal(ExternalRagAdapterResponseStatus.Partial, response.Status);
         Assert.NotNull(response.ImpactMap);
-        Assert.Equal("Dify Agent raw answer fallback retained", response.ImpactMap.ChangeSummary.Title);
+        Assert.Equal("External AI/RAG raw answer fallback retained", response.ImpactMap.ChangeSummary.Title);
         Assert.Equal("Partial answer", response.ImpactMap.ChangeSummary.Description);
         Assert.Empty(response.Errors);
         Assert.Contains("message_end", string.Join(" ", response.Warnings), StringComparison.OrdinalIgnoreCase);
@@ -193,7 +384,7 @@ public sealed class DifyExternalRagAdapterTests
     public async Task AnalyzeAsync_WhenInvalidAgentAnswerContainsSensitiveLookingFragments_RetainsOnlySanitizedRawFallback()
     {
         var handler = new CapturingHandler(_ => CreateSseResponse(HttpStatusCode.OK, """
-            data: {"event":"agent_message","answer":"Unable to produce JSON. apiKey=synthetic-key Authorization: Bearer synthetic-token cookie=session-value auth=auth-assignment auth: auth-colon session=session-assignment password=password-assignment password: password-colon dify.invalid/private"}
+            data: {"event":"agent_message","answer":"Unable to produce JSON. apiKey=synthetic-key Authorization: Bearer synthetic-token cookie=session-value auth=auth-assignment auth: auth-colon key=generic-key-assignment key: generic-key-colon session=session-assignment password=password-assignment password: password-colon dify.invalid/private"}
             data: {"event":"message_end","message_id":"msg-123","conversation_id":"conv-456"}
 
             """));
@@ -203,7 +394,7 @@ public sealed class DifyExternalRagAdapterTests
 
         Assert.Equal(ExternalRagAdapterResponseStatus.Partial, response.Status);
         Assert.NotNull(response.ImpactMap);
-        Assert.Equal("Dify Agent raw answer fallback retained", response.ImpactMap.ChangeSummary.Title);
+        Assert.Equal("External AI/RAG raw answer fallback retained", response.ImpactMap.ChangeSummary.Title);
         Assert.Contains("[REDACTED]", response.ImpactMap.ChangeSummary.Description, StringComparison.Ordinal);
         Assert.Contains("[REDACTED_URL]", response.ImpactMap.ChangeSummary.Description, StringComparison.Ordinal);
         Assert.Equal("raw-text-fallback", response.Metadata.SanitizedProperties["answerParseStatus"]);
@@ -220,11 +411,38 @@ public sealed class DifyExternalRagAdapterTests
                 "session-value",
                 "auth-assignment",
                 "auth-colon",
+                "generic-key-assignment",
+                "generic-key-colon",
                 "session-assignment",
                 "password-assignment",
                 "password-colon",
                 "dify.invalid/private"
             ]);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WhenAgentAnswerJsonHasUnexpectedShape_ReturnsPartialRawFallback()
+    {
+        var handler = new CapturingHandler(_ => CreateSseResponse(HttpStatusCode.OK, """
+            data: {"event":"agent_message","answer":"{\"answer\":\"not expected shape\"}"}
+            data: {"event":"message_end","message_id":"msg-unexpected","conversation_id":"conv-unexpected","metadata":{"usage":{"total_tokens":7}}}
+
+            """));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.Partial, response.Status);
+        Assert.NotNull(response.ImpactMap);
+        Assert.Equal("External AI/RAG raw answer fallback retained", response.ImpactMap.ChangeSummary.Title);
+        Assert.Equal("{\"answer\":\"not expected shape\"}", response.ImpactMap.ChangeSummary.Description);
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("expected structured answer shape", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal("dify-agent-raw-answer-fallback", response.Metadata.SanitizedProperties["responseShape"]);
+        Assert.Equal("raw-text-fallback", response.Metadata.SanitizedProperties["answerParseStatus"]);
+        Assert.Equal("true", response.Metadata.SanitizedProperties["rawAnswerFallbackRetained"]);
+        AssertSanitized(response, [TestApiKey, "https://dify.invalid", "Authorization", "Bearer"]);
     }
 
     [Fact]
@@ -327,6 +545,40 @@ public sealed class DifyExternalRagAdapterTests
         {
             Content = new StringContent(content, Encoding.UTF8, "text/event-stream")
         };
+
+    private static string CreateCompleteSsePayload(
+        string answer,
+        string messageId,
+        string conversationId,
+        int totalTokens)
+    {
+        var agentMessage = JsonSerializer.Serialize(new
+        {
+            @event = "agent_message",
+            answer
+        });
+        var messageEnd = JsonSerializer.Serialize(new
+        {
+            @event = "message_end",
+            message_id = messageId,
+            conversation_id = conversationId,
+            metadata = new
+            {
+                usage = new
+                {
+                    prompt_tokens = 12,
+                    completion_tokens = 5,
+                    total_tokens = totalTokens
+                }
+            }
+        });
+
+        return string.Join(
+            Environment.NewLine,
+            $"data: {agentMessage}",
+            $"data: {messageEnd}",
+            string.Empty);
+    }
 
     private static void AssertFailure(
         ExternalRagAdapterResponse response,
