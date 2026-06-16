@@ -1,3 +1,4 @@
+using RequirementImpactAssistant.Web.Domain;
 using RequirementImpactAssistant.Web.Domain.Impact;
 
 namespace RequirementImpactAssistant.Web.Application.Analysis;
@@ -14,4 +15,5 @@ public sealed record AiAnalysisResponse(
     ImpactMap? ImpactMap,
     string RawResponse,
     IReadOnlyList<string> Errors,
-    AnalysisBoundaryNotice BoundaryNotice);
+    AnalysisBoundaryNotice BoundaryNotice,
+    AiAnalysisResultMetadata? ResultMetadata = null);

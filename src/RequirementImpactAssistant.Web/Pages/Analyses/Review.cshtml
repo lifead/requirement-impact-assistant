@@ -1,9 +1,13 @@
 @page "/Analyses/{id:guid}/Review"
 @model RequirementImpactAssistant.Web.Pages.Analyses.ReviewModel
+@using RequirementImpactAssistant.Web.Domain.Enums
 @{
     ViewData["Title"] = Model.Analysis is null
         ? "Проверка исходных данных анализа"
         : $"Проверка ввода: {Model.Analysis.Title}";
+    var selectedAnalysisMode = string.IsNullOrWhiteSpace(Model.Input.AnalysisMode)
+        ? nameof(AnalysisMode.DirectLlm)
+        : Model.Input.AnalysisMode.Trim();
 }
 
 @if (Model.Analysis is not null)
@@ -37,6 +41,39 @@
                   asp-page-handler="RunAnalysis"
                   asp-route-id="@Model.Analysis.Id"
                   class="mb-4">
+                <fieldset class="mb-3">
+                    <legend class="h5 mb-3">Режим предварительного анализа</legend>
+
+                    <div class="form-check mb-2">
+                        <input class="form-check-input"
+                               type="radio"
+                               name="Input.AnalysisMode"
+                               id="analysis-mode-direct-llm"
+                               value="@nameof(AnalysisMode.DirectLlm)"
+                               checked="@(selectedAnalysisMode == nameof(AnalysisMode.DirectLlm))" />
+                        <label class="form-check-label" for="analysis-mode-direct-llm">
+                            Direct LLM
+                        </label>
+                    </div>
+
+                    <div class="form-check">
+                        <input class="form-check-input"
+                               type="radio"
+                               name="Input.AnalysisMode"
+                               id="analysis-mode-external-rag"
+                               value="@nameof(AnalysisMode.ExternalRag)"
+                               checked="@(selectedAnalysisMode == nameof(AnalysisMode.ExternalRag))" />
+                        <label class="form-check-label" for="analysis-mode-external-rag">
+                            External AI/RAG
+                        </label>
+                    </div>
+
+                    <div class="form-text text-warning-emphasis mt-2">
+                        Режим External AI/RAG может передавать данные во внешний AI/RAG-контур и может быть ограничен или недоступен.
+                    </div>
+                    <span asp-validation-for="Input.AnalysisMode" class="text-danger"></span>
+                </fieldset>
+
                 <button type="submit" class="btn btn-primary">Запустить предварительный анализ</button>
             </form>
         }

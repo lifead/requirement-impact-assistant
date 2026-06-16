@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using RequirementImpactAssistant.Web.Application.Analysis;
+using RequirementImpactAssistant.Web.Application.Analysis.External;
+using RequirementImpactAssistant.Web.Application.Analysis.External.Dify;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Application.Export;
 using RequirementImpactAssistant.Web.Data;
@@ -32,6 +34,18 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    public static async Task ApplyApplicationPersistenceMigrationsAsync(
+        this IServiceProvider serviceProvider,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(serviceProvider);
+
+        using var scope = serviceProvider.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+
+        await dbContext.Database.MigrateAsync(cancellationToken).ConfigureAwait(false);
+    }
+
     public static IServiceCollection AddApplicationAnalysis(
         this IServiceCollection services,
         IConfiguration configuration)
@@ -45,7 +59,32 @@ public static class ServiceCollectionExtensions
                     || !string.IsNullOrWhiteSpace(options.DeepSeek.Model),
                 "DeepSeek model is required when DeepSeek provider is selected.");
 
-        services.AddScoped<IAiAnalysisEngine, DirectLlmAnalysisEngine>();
+        services
+            .AddOptions<DifyExternalRagOptions>()
+            .Bind(configuration.GetSection(DifyExternalRagOptions.SectionName));
+
+        services.AddScoped<DirectLlmAnalysisEngine>();
+
+        var difyOptions = configuration
+            .GetSection(DifyExternalRagOptions.SectionName)
+            .Get<DifyExternalRagOptions>() ?? new DifyExternalRagOptions();
+
+        if (difyOptions.IsConfigured)
+        {
+            services.AddHttpClient<DifyExternalRagAdapter>();
+            services.AddScoped<IExternalRagAdapter>(serviceProvider =>
+                serviceProvider.GetRequiredService<DifyExternalRagAdapter>());
+        }
+        else
+        {
+            services.TryAddScoped<IExternalRagAdapter, MockExternalRagAdapter>();
+        }
+
+        services.AddScoped<ExternalRagAnalysisEngine>(serviceProvider =>
+            new ExternalRagAnalysisEngine(serviceProvider.GetService<IExternalRagAdapter>()));
+        services.AddScoped<IAiAnalysisEngine>(serviceProvider =>
+            serviceProvider.GetRequiredService<DirectLlmAnalysisEngine>());
+        services.AddScoped<IAiAnalysisEngineSelector, AiAnalysisEngineSelector>();
         services.AddScoped<IAnalysisExecutionService, AnalysisExecutionService>();
         services.AddScoped<IAnalysisInputAssembler, AnalysisInputAssembler>();
         services.TryAddScoped<DemoLlmProvider>();

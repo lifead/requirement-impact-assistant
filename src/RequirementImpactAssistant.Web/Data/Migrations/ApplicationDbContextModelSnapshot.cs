@@ -351,6 +351,133 @@ namespace RequirementImpactAssistant.Web.Data.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.OwnsOne("RequirementImpactAssistant.Web.Domain.AiAnalysisResultMetadata", "Metadata", b1 =>
+                        {
+                            b1.Property<Guid>("AiAnalysisResultId")
+                                .HasColumnType("TEXT");
+
+                            b1.Property<string>("AdapterName")
+                                .HasMaxLength(200)
+                                .HasColumnType("TEXT")
+                                .HasColumnName("MetadataAdapterName");
+
+                            b1.Property<string>("AnalysisMode")
+                                .IsRequired()
+                                .ValueGeneratedOnAdd()
+                                .HasMaxLength(50)
+                                .HasColumnType("TEXT")
+                                .HasDefaultValue("DirectLlm")
+                                .HasColumnName("AnalysisMode");
+
+                            b1.Property<string>("EngineName")
+                                .HasMaxLength(200)
+                                .HasColumnType("TEXT")
+                                .HasColumnName("MetadataEngineName");
+
+                            b1.Property<bool>("ManualContextForwardedToExternalAiOrRag")
+                                .ValueGeneratedOnAdd()
+                                .HasColumnType("INTEGER")
+                                .HasDefaultValue(false)
+                                .HasColumnName("ManualContextForwardedToExternalAiOrRag");
+
+                            b1.Property<string>("ModelWorkflowProfileName")
+                                .HasMaxLength(200)
+                                .HasColumnType("TEXT")
+                                .HasColumnName("MetadataModelWorkflowProfileName");
+
+                            b1.Property<string>("ProviderName")
+                                .HasMaxLength(200)
+                                .HasColumnType("TEXT")
+                                .HasColumnName("MetadataProviderName");
+
+                            b1.Property<string>("RetrievedContextState")
+                                .IsRequired()
+                                .ValueGeneratedOnAdd()
+                                .HasMaxLength(50)
+                                .HasColumnType("TEXT")
+                                .HasDefaultValue("Unavailable")
+                                .HasColumnName("RetrievedContextState");
+
+                            b1.Property<string>("Warnings")
+                                .HasColumnType("TEXT")
+                                .HasColumnName("Warnings");
+
+                            b1.HasKey("AiAnalysisResultId");
+
+                            b1.ToTable("AiAnalysisResults");
+
+                            b1.WithOwner()
+                                .HasForeignKey("AiAnalysisResultId");
+
+                            b1.OwnsMany("RequirementImpactAssistant.Web.Domain.RetrievedContextItem", "RetrievedContextItems", b2 =>
+                                {
+                                    b2.Property<Guid>("AiAnalysisResultId")
+                                        .HasColumnType("TEXT");
+
+                                    b2.Property<int>("Ordinal")
+                                        .ValueGeneratedOnAdd()
+                                        .HasColumnType("INTEGER");
+
+                                    b2.Property<string>("AdapterName")
+                                        .HasMaxLength(200)
+                                        .HasColumnType("TEXT");
+
+                                    b2.Property<string>("Completeness")
+                                        .IsRequired()
+                                        .HasMaxLength(50)
+                                        .HasColumnType("TEXT");
+
+                                    b2.Property<string>("Excerpt")
+                                        .HasColumnType("TEXT");
+
+                                    b2.Property<string>("ExternalReference")
+                                        .HasMaxLength(500)
+                                        .HasColumnType("TEXT");
+
+                                    b2.Property<string>("FragmentId")
+                                        .HasMaxLength(300)
+                                        .HasColumnType("TEXT");
+
+                                    b2.Property<string>("ProviderName")
+                                        .HasMaxLength(200)
+                                        .HasColumnType("TEXT");
+
+                                    b2.Property<int?>("Rank")
+                                        .HasColumnType("INTEGER");
+
+                                    b2.Property<double?>("Score")
+                                        .HasColumnType("REAL");
+
+                                    b2.Property<string>("SourceId")
+                                        .HasMaxLength(300)
+                                        .HasColumnType("TEXT");
+
+                                    b2.Property<string>("SourceTitle")
+                                        .IsRequired()
+                                        .HasMaxLength(500)
+                                        .HasColumnType("TEXT");
+
+                                    b2.Property<string>("Text")
+                                        .HasColumnType("TEXT");
+
+                                    b2.Property<string>("UrlOrReference")
+                                        .HasMaxLength(1000)
+                                        .HasColumnType("TEXT");
+
+                                    b2.Property<string>("WarningOrLimitationNote")
+                                        .HasColumnType("TEXT");
+
+                                    b2.HasKey("AiAnalysisResultId", "Ordinal");
+
+                                    b2.ToTable("RetrievedContextItems", (string)null);
+
+                                    b2.WithOwner()
+                                        .HasForeignKey("AiAnalysisResultId");
+                                });
+
+                            b1.Navigation("RetrievedContextItems");
+                        });
+
                     b.OwnsOne("RequirementImpactAssistant.Web.Domain.Impact.ImpactMap", "ImpactMap", b1 =>
                         {
                             b1.Property<Guid>("AiAnalysisResultId")
@@ -1014,6 +1141,9 @@ namespace RequirementImpactAssistant.Web.Data.Migrations
                         });
 
                     b.Navigation("ImpactMap");
+
+                    b.Navigation("Metadata")
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("RequirementImpactAssistant.Web.Domain.ContextFragment", b =>

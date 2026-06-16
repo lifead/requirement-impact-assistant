@@ -41,6 +41,61 @@ public sealed class DomainModelDefaultsTests
     }
 
     [Fact]
+    public void AiAnalysisResult_DefaultsToNeutralDirectLlmMetadata()
+    {
+        var result = new AiAnalysisResult();
+
+        Assert.Equal(AnalysisMode.DirectLlm, result.Metadata.AnalysisMode);
+        Assert.Equal(string.Empty, result.Metadata.EngineName);
+        Assert.Null(result.Metadata.ProviderName);
+        Assert.Null(result.Metadata.AdapterName);
+        Assert.Null(result.Metadata.ModelWorkflowProfileName);
+        Assert.Equal(RetrievedContextState.Unavailable, result.Metadata.RetrievedContextState);
+        Assert.Empty(result.Metadata.RetrievedContextItems);
+        Assert.Empty(result.Metadata.Warnings);
+        Assert.False(result.Metadata.ManualContextForwardedToExternalAiOrRag);
+    }
+
+    [Fact]
+    public void AiAnalysisResult_LegacyMvp0FieldsProvideDefaultMetadata()
+    {
+        var result = new AiAnalysisResult
+        {
+            EngineName = "DirectLlmAnalysisEngine",
+            ProviderName = "Demo",
+            ModelName = "demo-deterministic"
+        };
+
+        Assert.Equal(AnalysisMode.DirectLlm, result.Metadata.AnalysisMode);
+        Assert.Equal("DirectLlmAnalysisEngine", result.Metadata.EngineName);
+        Assert.Equal("Demo", result.Metadata.ProviderName);
+        Assert.Null(result.Metadata.AdapterName);
+        Assert.Equal("demo-deterministic", result.Metadata.ModelWorkflowProfileName);
+        Assert.Equal(RetrievedContextState.Unavailable, result.Metadata.RetrievedContextState);
+        Assert.Empty(result.Metadata.RetrievedContextItems);
+        Assert.Empty(result.Metadata.Warnings);
+        Assert.False(result.Metadata.ManualContextForwardedToExternalAiOrRag);
+    }
+
+    [Fact]
+    public void AiAnalysisResultMetadata_CanRepresentRetrievedContextStateWithoutItems()
+    {
+        var metadata = new AiAnalysisResultMetadata
+        {
+            AnalysisMode = AnalysisMode.ExternalRag,
+            EngineName = "ExternalAiAnalysisEngine",
+            AdapterName = "NeutralAdapter",
+            RetrievedContextState = RetrievedContextState.MetadataOnly,
+            Warnings = ["Retrieved context metadata is available without excerpts."]
+        };
+
+        Assert.Equal(AnalysisMode.ExternalRag, metadata.AnalysisMode);
+        Assert.Equal(RetrievedContextState.MetadataOnly, metadata.RetrievedContextState);
+        Assert.Empty(metadata.RetrievedContextItems);
+        Assert.Equal(["Retrieved context metadata is available without excerpts."], metadata.Warnings);
+    }
+
+    [Fact]
     public void ExpertEvaluation_DefaultsToNotAssessed()
     {
         var evaluation = new ExpertEvaluation();

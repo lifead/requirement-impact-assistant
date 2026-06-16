@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Text;
 using RequirementImpactAssistant.Web.Application.Analysis;
 using RequirementImpactAssistant.Web.Domain;
+using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
 using DomainAnalysis = RequirementImpactAssistant.Web.Domain.Analysis;
 
@@ -15,6 +17,8 @@ public sealed class AnalysisMarkdownReportBuilder
         var builder = new StringBuilder();
         AppendHeading(builder, 1, analysis.Title);
         AppendMetadata(builder, analysis, exportedAt);
+        AppendAnalysisResultMetadata(builder, analysis.AiAnalysisResult);
+        AppendRetrievedContext(builder, analysis.AiAnalysisResult);
         AppendInput(builder, analysis);
         AppendContextFragments(builder, analysis.ContextFragments);
         AppendImpactMap(builder, analysis.AiAnalysisResult?.ImpactMap);
@@ -30,6 +34,101 @@ public sealed class AnalysisMarkdownReportBuilder
         AppendHeading(builder, 2, "Export metadata");
         AppendBullet(builder, "Exported at", FormatDate(exportedAt));
         AppendBullet(builder, "Analysis status", analysis.Status.ToString());
+        builder.AppendLine();
+    }
+
+    private static void AppendAnalysisResultMetadata(StringBuilder builder, AiAnalysisResult? aiAnalysisResult)
+    {
+        AppendHeading(builder, 2, "Analysis result metadata");
+
+        if (aiAnalysisResult is null)
+        {
+            builder.AppendLine("No AI analysis result metadata was saved.");
+            builder.AppendLine();
+            return;
+        }
+
+        var metadata = aiAnalysisResult.Metadata;
+
+        AppendBullet(builder, "Analysis mode", metadata.AnalysisMode.ToString());
+        AppendBullet(builder, "Engine", FirstNonBlank(metadata.EngineName, aiAnalysisResult.EngineName));
+        AppendBullet(builder, "Provider", metadata.ProviderName);
+        AppendBullet(builder, "Adapter", metadata.AdapterName);
+        AppendBullet(builder, "Model workflow profile", metadata.ModelWorkflowProfileName);
+        AppendBullet(
+            builder,
+            "Manual context forwarded to external AI or RAG",
+            metadata.ManualContextForwardedToExternalAiOrRag.ToString());
+        AppendBullet(builder, "Retrieved context state", metadata.RetrievedContextState.ToString());
+        AppendWarnings(builder, metadata.Warnings);
+    }
+
+    private static void AppendRetrievedContext(StringBuilder builder, AiAnalysisResult? aiAnalysisResult)
+    {
+        AppendHeading(builder, 2, "Retrieved context");
+
+        if (aiAnalysisResult is null)
+        {
+            builder.AppendLine("No AI analysis result was saved, so no retrieved context was saved.");
+            builder.AppendLine();
+            return;
+        }
+
+        var metadata = aiAnalysisResult.Metadata;
+        AppendBullet(builder, "State", metadata.RetrievedContextState.ToString());
+        AppendField(builder, "Limitation note", FormatRetrievedContextLimitation(metadata.RetrievedContextState));
+
+        if (metadata.RetrievedContextItems.Count == 0)
+        {
+            builder.AppendLine("No retrieved context items were saved.");
+            builder.AppendLine();
+            return;
+        }
+
+        var itemNumber = 1;
+        foreach (var item in metadata.RetrievedContextItems)
+        {
+            AppendHeading(builder, 3, $"Retrieved context item {itemNumber}: {EmptyIfBlank(item.SourceTitle)}");
+            AppendBullet(builder, "Source title", item.SourceTitle);
+            AppendBullet(builder, "Source id", item.SourceId);
+            AppendBullet(builder, "External reference", item.ExternalReference);
+            AppendBullet(builder, "Fragment id", item.FragmentId);
+            AppendBullet(builder, "URL or reference", item.UrlOrReference);
+            AppendBullet(builder, "Rank", item.Rank?.ToString(CultureInfo.InvariantCulture));
+            AppendBullet(builder, "Score", FormatScore(item.Score));
+            AppendBullet(builder, "Provider", item.ProviderName);
+            AppendBullet(builder, "Adapter", item.AdapterName);
+            AppendBullet(builder, "Completeness", item.Completeness.ToString());
+            AppendBullet(builder, "Warning or limitation note", item.WarningOrLimitationNote);
+
+            AppendOptionalFencedBlock(builder, "Text", item.Text);
+            AppendOptionalFencedBlock(builder, "Excerpt", item.Excerpt);
+
+            itemNumber++;
+        }
+    }
+
+    private static void AppendWarnings(StringBuilder builder, IReadOnlyCollection<string> warnings)
+    {
+        AppendHeading(builder, 3, "Warnings");
+
+        var savedWarnings = warnings
+            .Where(warning => !string.IsNullOrWhiteSpace(warning))
+            .Select(warning => warning.Trim())
+            .ToList();
+
+        if (savedWarnings.Count == 0)
+        {
+            builder.AppendLine("No warnings were saved.");
+            builder.AppendLine();
+            return;
+        }
+
+        foreach (var warning in savedWarnings)
+        {
+            builder.AppendLine($"- {warning}");
+        }
+
         builder.AppendLine();
     }
 
@@ -241,10 +340,10 @@ public sealed class AnalysisMarkdownReportBuilder
         builder.AppendLine();
     }
 
-    private static void AppendBullet(StringBuilder builder, string label, string value) =>
+    private static void AppendBullet(StringBuilder builder, string label, string? value) =>
         builder.AppendLine($"- **{label}:** {EmptyIfBlank(value)}");
 
-    private static void AppendNestedBullet(StringBuilder builder, string label, string value) =>
+    private static void AppendNestedBullet(StringBuilder builder, string label, string? value) =>
         builder.AppendLine($"  - **{label}:** {EmptyIfBlank(value)}");
 
     private static void AppendField(StringBuilder builder, string label, string value)
@@ -266,6 +365,29 @@ public sealed class AnalysisMarkdownReportBuilder
         builder.AppendLine(fence);
         builder.AppendLine();
     }
+
+    private static void AppendOptionalFencedBlock(StringBuilder builder, string label, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            AppendBullet(builder, label, null);
+            builder.AppendLine();
+            return;
+        }
+
+        AppendFencedBlock(builder, label, value);
+    }
+
+    private static string FormatRetrievedContextLimitation(RetrievedContextState state) =>
+        state switch
+        {
+            RetrievedContextState.Available => "Retrieved context was saved for this analysis result.",
+            RetrievedContextState.MetadataOnly =>
+                "Only retrieved context metadata was saved; full text or excerpts may be unavailable.",
+            RetrievedContextState.Partial =>
+                "Retrieved context was saved only partially; review item completeness and limitation notes.",
+            _ => "Retrieved context is unavailable for this saved analysis result."
+        };
 
     private static string CreateMarkdownFence(string value)
     {
@@ -292,6 +414,9 @@ public sealed class AnalysisMarkdownReportBuilder
     private static string FormatDate(DateTimeOffset value) =>
         value.ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss 'UTC'");
 
+    private static string? FormatScore(double? value) =>
+        value?.ToString("0.################", CultureInfo.InvariantCulture);
+
     private static string FormatRelatedContext(IReadOnlyCollection<Guid> relatedContextFragmentIds) =>
         relatedContextFragmentIds.Count == 0
             ? "None"
@@ -299,4 +424,7 @@ public sealed class AnalysisMarkdownReportBuilder
 
     private static string EmptyIfBlank(string? value) =>
         string.IsNullOrWhiteSpace(value) ? "Not provided" : value.Trim();
+
+    private static string? FirstNonBlank(params string?[] values) =>
+        values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
 }

@@ -2,6 +2,10 @@ using RequirementImpactAssistant.Web.Extensions;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddDebug();
+
 // Add services to the container.
 builder.Services.AddRazorPages();
 builder.Services.AddApplicationPersistence(builder.Configuration, builder.Environment.ContentRootPath);
@@ -9,6 +13,8 @@ builder.Services.AddApplicationAnalysis(builder.Configuration);
 builder.Services.AddApplicationExport();
 
 var app = builder.Build();
+
+await app.Services.ApplyApplicationPersistenceMigrationsAsync();
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())

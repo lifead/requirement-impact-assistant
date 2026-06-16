@@ -1,7 +1,6 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text;
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -20,20 +19,8 @@ public sealed class DetailsModel(
     IAnalysisMarkdownExportService? markdownExportService = null,
     IAnalysisJsonExportService? jsonExportService = null) : PageModel
 {
-    private const long MaxUploadFileSizeBytes = 1_048_576;
-
-    private static readonly HashSet<string> AllowedUploadExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".json",
-        ".md",
-        ".txt"
-    };
-
     [BindProperty]
     public ManualContextFragmentInput ContextFragmentInput { get; set; } = new();
-
-    [BindProperty]
-    public FileContextFragmentInput UploadContextFragmentInput { get; set; } = new();
 
     public AnalysisDetails? Analysis { get; private set; }
 
@@ -108,66 +95,6 @@ public sealed class DetailsModel(
         return RedirectToPage("/Analyses/Details", new { id = analysis.Id });
     }
 
-    public async Task<IActionResult> OnPostUploadContextFragmentAsync(Guid id)
-    {
-        var analysis = await dbContext.Analyses
-            .SingleOrDefaultAsync(candidate => candidate.Id == id);
-
-        if (analysis is null)
-        {
-            return NotFound();
-        }
-
-        ClearManualContextFragmentValidation();
-
-        if (!UploadContextFragmentInput.Validate(ModelState))
-        {
-            Analysis = await LoadAnalysisDetailsAsync(id);
-            return Page();
-        }
-
-        var uploadedFile = UploadContextFragmentInput.File!;
-        var originalFileName = SanitizeOriginalFileName(uploadedFile.FileName);
-        var extension = Path.GetExtension(originalFileName);
-        var storedFileName = $"{Guid.NewGuid():N}{extension.ToLowerInvariant()}";
-        var relativePath = BuildUploadRelativePath(analysis.Id, storedFileName);
-        var absolutePath = ToAbsoluteUploadPath(relativePath);
-        var now = DateTimeOffset.UtcNow;
-
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(absolutePath)!);
-
-            await using (var output = new FileStream(absolutePath, FileMode.CreateNew, FileAccess.Write))
-            {
-                await uploadedFile.CopyToAsync(output);
-            }
-
-            var text = await System.IO.File.ReadAllTextAsync(absolutePath);
-
-            dbContext.ContextFragments.Add(new ContextFragment
-            {
-                AnalysisId = analysis.Id,
-                Type = UploadContextFragmentInput.Type,
-                Source = UploadContextFragmentInput.GetSource(originalFileName),
-                Text = text,
-                FileName = originalFileName,
-                FilePath = relativePath,
-                CreatedAt = now
-            });
-            analysis.UpdatedAt = now;
-
-            await dbContext.SaveChangesAsync();
-        }
-        catch
-        {
-            DeleteStoredFileBestEffort(relativePath, analysis.Id);
-            throw;
-        }
-
-        return RedirectToPage("/Analyses/Details", new { id = analysis.Id });
-    }
-
     public async Task<IActionResult> OnPostDeleteContextFragmentAsync(Guid id, Guid fragmentId)
     {
         var fragment = await dbContext.ContextFragments
@@ -217,17 +144,7 @@ public sealed class DetailsModel(
                     analysis.ExpertConclusion.FixedAt),
             analysis.AiAnalysisResult is null
                 ? null
-                : new AiAnalysisResultDetails(
-                    analysis.AiAnalysisResult.Status,
-                    analysis.AiAnalysisResult.GeneratedAt,
-                    analysis.AiAnalysisResult.EngineName,
-                    analysis.AiAnalysisResult.ProviderName,
-                    analysis.AiAnalysisResult.ModelName,
-                    analysis.AiAnalysisResult.PromptVersion,
-                    analysis.AiAnalysisResult.InputSnapshot,
-                    analysis.AiAnalysisResult.RawResponse,
-                    analysis.AiAnalysisResult.ErrorMessage,
-                    analysis.AiAnalysisResult.ImpactMap),
+                : ToAiAnalysisResultDetails(analysis.AiAnalysisResult),
             analysis.ContextFragments
                 .OrderByDescending(fragment => fragment.CreatedAt)
                 .Select(fragment => new ContextFragmentDetails(
@@ -240,12 +157,53 @@ public sealed class DetailsModel(
                     fragment.CreatedAt))
                 .ToList());
 
+    private static AiAnalysisResultDetails ToAiAnalysisResultDetails(AiAnalysisResult result) =>
+        new(
+            result.Status,
+            result.GeneratedAt,
+            result.PromptVersion,
+            result.InputSnapshot,
+            result.RawResponse,
+            result.ErrorMessage,
+            result.ImpactMap,
+            ToAiAnalysisResultMetadataDetails(result.Metadata));
+
+    private static AiAnalysisResultMetadataDetails ToAiAnalysisResultMetadataDetails(
+        AiAnalysisResultMetadata metadata) =>
+        new(
+            metadata.AnalysisMode,
+            metadata.EngineName,
+            metadata.ProviderName,
+            metadata.AdapterName,
+            metadata.ModelWorkflowProfileName,
+            metadata.RetrievedContextState,
+            metadata.ManualContextForwardedToExternalAiOrRag,
+            metadata.Warnings
+                .Where(warning => !string.IsNullOrWhiteSpace(warning))
+                .Select(warning => warning.Trim())
+                .ToList(),
+            metadata.RetrievedContextItems
+                .Select(item => new RetrievedContextItemDetails(
+                    item.SourceTitle,
+                    item.SourceId,
+                    item.ExternalReference,
+                    item.FragmentId,
+                    item.Text,
+                    item.Excerpt,
+                    item.UrlOrReference,
+                    item.Rank,
+                    item.Score,
+                    item.Completeness,
+                    item.WarningOrLimitationNote))
+                .ToList());
+
     private async Task<AnalysisDetails?> LoadAnalysisDetailsAsync(Guid id)
     {
         var analysis = await dbContext.Analyses
             .AsNoTracking()
             .Include(candidate => candidate.ContextFragments)
             .Include(candidate => candidate.AiAnalysisResult)
+                .ThenInclude(result => result!.Metadata.RetrievedContextItems)
             .Include(candidate => candidate.ExpertEvaluation)
             .Include(candidate => candidate.ExpertConclusion)
             .SingleOrDefaultAsync(candidate => candidate.Id == id);
@@ -280,14 +238,12 @@ public sealed class DetailsModel(
     public sealed record AiAnalysisResultDetails(
         AiAnalysisResultStatus Status,
         DateTimeOffset? GeneratedAt,
-        string EngineName,
-        string ProviderName,
-        string ModelName,
         string PromptVersion,
         string InputSnapshot,
         string RawResponse,
         string ErrorMessage,
-        ImpactMap? ImpactMap)
+        ImpactMap? ImpactMap,
+        AiAnalysisResultMetadataDetails Metadata)
     {
         public IReadOnlyList<ImpactMapSectionDetails> ImpactSections =>
             ImpactMap is null
@@ -309,6 +265,30 @@ public sealed class DetailsModel(
                     new("Предварительная оценка", [ImpactMap.PreliminaryAssessment])
                 ];
     }
+
+    public sealed record AiAnalysisResultMetadataDetails(
+        AnalysisMode AnalysisMode,
+        string EngineName,
+        string? ProviderName,
+        string? AdapterName,
+        string? ModelWorkflowProfileName,
+        RetrievedContextState RetrievedContextState,
+        bool ManualContextForwardedToExternalAiOrRag,
+        IReadOnlyList<string> Warnings,
+        IReadOnlyList<RetrievedContextItemDetails> RetrievedContextItems);
+
+    public sealed record RetrievedContextItemDetails(
+        string SourceTitle,
+        string? SourceId,
+        string? ExternalReference,
+        string? FragmentId,
+        string? Text,
+        string? Excerpt,
+        string? UrlOrReference,
+        int? Rank,
+        double? Score,
+        RetrievedContextItemCompleteness Completeness,
+        string? WarningOrLimitationNote);
 
     public sealed record ImpactMapSectionDetails(
         string Title,
@@ -364,57 +344,6 @@ public sealed class DetailsModel(
         }
     }
 
-    public sealed class FileContextFragmentInput
-    {
-        public ContextFragmentType Type { get; set; } = ContextFragmentType.Other;
-
-        public string? Source { get; set; }
-
-        public IFormFile? File { get; set; }
-
-        public bool Validate(ModelStateDictionary modelState)
-        {
-            if (File is null || File.Length == 0)
-            {
-                modelState.AddModelError($"{nameof(DetailsModel.UploadContextFragmentInput)}.{nameof(File)}", "Файл обязателен.");
-                return false;
-            }
-
-            if (File.Length > MaxUploadFileSizeBytes)
-            {
-                modelState.AddModelError(
-                    $"{nameof(DetailsModel.UploadContextFragmentInput)}.{nameof(File)}",
-                    "Размер файла не должен превышать 1 МБ.");
-            }
-
-            var extension = Path.GetExtension(SanitizeOriginalFileName(File.FileName));
-            if (!AllowedUploadExtensions.Contains(extension))
-            {
-                modelState.AddModelError(
-                    $"{nameof(DetailsModel.UploadContextFragmentInput)}.{nameof(File)}",
-                    "Поддерживаются только файлы Markdown, TXT и JSON.");
-            }
-
-            return modelState.IsValid;
-        }
-
-        public string GetSource(string fileName) =>
-            string.IsNullOrWhiteSpace(Source)
-                ? fileName
-                : Source.Trim();
-    }
-
-    private static string BuildUploadRelativePath(Guid analysisId, string storedFileName) =>
-        $"data/uploads/{analysisId}/{storedFileName}";
-
-    private static string SanitizeOriginalFileName(string fileName)
-    {
-        var normalized = fileName.Replace('\\', '/');
-        var lastSegment = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
-
-        return Path.GetFileName(lastSegment ?? string.Empty);
-    }
-
     private string ToAbsoluteUploadPath(string relativePath) =>
         Path.GetFullPath(Path.Combine(GetContentRootPath(), relativePath));
 
@@ -444,18 +373,6 @@ public sealed class DetailsModel(
         }
     }
 
-    private void DeleteStoredFileBestEffort(string relativePath, Guid analysisId)
-    {
-        try
-        {
-            DeleteStoredFileIfPresent(relativePath, analysisId);
-        }
-        catch
-        {
-            // Preserve the original upload or database failure for the caller.
-        }
-    }
-
     private static string EnsureTrailingDirectorySeparator(string path) =>
         path.EndsWith(Path.DirectorySeparatorChar)
             ? path
@@ -466,9 +383,4 @@ public sealed class DetailsModel(
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;
 
-    private void ClearManualContextFragmentValidation()
-    {
-        ModelState.Remove($"{nameof(ContextFragmentInput)}.{nameof(ManualContextFragmentInput.Source)}");
-        ModelState.Remove($"{nameof(ContextFragmentInput)}.{nameof(ManualContextFragmentInput.Text)}");
-    }
 }

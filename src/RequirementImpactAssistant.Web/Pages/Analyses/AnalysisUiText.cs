@@ -63,6 +63,49 @@ public static class AnalysisUiText
             _ => status.ToString()
         };
 
+    public static string AnalysisModeLabel(AnalysisMode mode) =>
+        mode switch
+        {
+            AnalysisMode.DirectLlm => "Direct LLM",
+            AnalysisMode.ExternalRag => "External AI/RAG",
+            _ => mode.ToString()
+        };
+
+    public static string RetrievedContextStateLabel(RetrievedContextState state) =>
+        state switch
+        {
+            RetrievedContextState.Unavailable => "Контекст не сохранен",
+            RetrievedContextState.Available => "Контекст доступен",
+            RetrievedContextState.MetadataOnly => "Сохранены только метаданные контекста",
+            RetrievedContextState.Partial => "Контекст сохранен частично",
+            _ => state.ToString()
+        };
+
+    public static string RetrievedContextStateDescription(RetrievedContextState state) =>
+        state switch
+        {
+            RetrievedContextState.Available => "Сохраненные элементы содержат текстовые основания внешнего AI/RAG результата.",
+            RetrievedContextState.MetadataOnly => "Сохранены только сведения об источниках; полный текст и выдержки не сохранены.",
+            RetrievedContextState.Partial => "Часть оснований сохранена не полностью; учитывайте ограничения для воспроизводимости.",
+            RetrievedContextState.Unavailable => "Основание внешнего AI/RAG результата не сохранено, поэтому воспроизводимость по источникам ограничена.",
+            _ => state.ToString()
+        };
+
+    public static string RetrievedContextItemCompletenessLabel(RetrievedContextItemCompleteness completeness) =>
+        completeness switch
+        {
+            RetrievedContextItemCompleteness.FullText => "Полный текст",
+            RetrievedContextItemCompleteness.ExcerptOnly => "Только выдержка",
+            RetrievedContextItemCompleteness.MetadataOnly => "Только метаданные",
+            RetrievedContextItemCompleteness.Unavailable => "Недоступно",
+            _ => completeness.ToString()
+        };
+
+    public static string ManualContextForwardingLabel(bool forwarded) =>
+        forwarded
+            ? "Передавался во внешний контур"
+            : "Не передавался во внешний контур";
+
     public static string ContextFragmentTypeLabel(ContextFragmentType type) =>
         type switch
         {

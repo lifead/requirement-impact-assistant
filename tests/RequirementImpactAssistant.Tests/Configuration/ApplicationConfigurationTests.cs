@@ -1,16 +1,23 @@
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using RequirementImpactAssistant.Web.Application.Analysis;
+using RequirementImpactAssistant.Web.Application.Analysis.External;
+using RequirementImpactAssistant.Web.Application.Analysis.External.Dify;
 using RequirementImpactAssistant.Web.Application.Analysis.Llm;
 using RequirementImpactAssistant.Web.Data;
+using RequirementImpactAssistant.Web.Domain;
+using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Extensions;
 
 namespace RequirementImpactAssistant.Tests.Configuration;
 
 public sealed class ApplicationConfigurationTests
 {
+    private const string NonSecretConfigurationValue = "provided-by-test-configuration";
+
     [Fact]
     public void Configuration_LoadsDevelopmentSqliteConnectionString()
     {
@@ -80,8 +87,71 @@ public sealed class ApplicationConfigurationTests
         using var serviceProvider = services.BuildServiceProvider();
         using var scope = serviceProvider.CreateScope();
         var engine = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngine>();
+        var selector = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngineSelector>();
+        var externalAdapter = scope.ServiceProvider.GetRequiredService<IExternalRagAdapter>();
 
         Assert.IsType<DirectLlmAnalysisEngine>(engine);
+        Assert.IsType<MockExternalRagAdapter>(externalAdapter);
+        Assert.IsType<DirectLlmAnalysisEngine>(selector.Select(AnalysisMode.DirectLlm));
+        Assert.IsType<ExternalRagAnalysisEngine>(selector.Select(AnalysisMode.ExternalRag));
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(IAnalysisExecutionService));
+    }
+
+    [Fact]
+    public void ApplicationAnalysisRegistration_ConfiguredDifyKeepsDirectLlmDefault()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiAnalysis:Provider"] = LlmProviderNames.Demo,
+                ["ExternalRag:Dify:Enabled"] = "true",
+                ["ExternalRag:Dify:Endpoint"] = new UriBuilder(Uri.UriSchemeHttps, "dify.invalid").Uri.ToString(),
+                ["ExternalRag:Dify:WorkflowOrAppId"] = "workflow-placeholder",
+                ["ExternalRag:Dify:ApiKey"] = NonSecretConfigurationValue
+            })
+            .Build();
+        var services = new ServiceCollection();
+        services.AddSingleton<ILlmProvider, NoopLlmProvider>();
+
+        services.AddApplicationAnalysis(configuration);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+
+        var engine = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngine>();
+        var selector = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngineSelector>();
+        var externalAdapter = scope.ServiceProvider.GetRequiredService<IExternalRagAdapter>();
+
+        Assert.IsType<DirectLlmAnalysisEngine>(engine);
+        Assert.Same(engine, selector.Select(AnalysisMode.DirectLlm));
+        Assert.IsType<ExternalRagAnalysisEngine>(selector.Select(AnalysisMode.ExternalRag));
+        Assert.IsType<DifyExternalRagAdapter>(externalAdapter);
+    }
+
+    [Fact]
+    public async Task ApplicationAnalysisRegistration_WiresMockAdapterForExternalRagMode()
+    {
+        var configuration = CreateApplicationConfiguration();
+        var services = new ServiceCollection();
+        services.AddSingleton<ILlmProvider, NoopLlmProvider>();
+
+        services.AddApplicationAnalysis(configuration);
+
+        using var serviceProvider = services.BuildServiceProvider();
+        using var scope = serviceProvider.CreateScope();
+        var selector = scope.ServiceProvider.GetRequiredService<IAiAnalysisEngineSelector>();
+
+        var response = await selector
+            .Select(AnalysisMode.ExternalRag)
+            .AnalyzeAsync(CreateAnalysisRequest());
+
+        Assert.Equal(AiAnalysisResponseStatus.Succeeded, response.Status);
+        Assert.NotNull(response.ResultMetadata);
+        Assert.Equal(AnalysisMode.ExternalRag, response.ResultMetadata.AnalysisMode);
+        Assert.Equal(nameof(ExternalRagAnalysisEngine), response.ResultMetadata.EngineName);
+        Assert.Equal("LocalMockKnowledgeSource", response.ResultMetadata.ProviderName);
+        Assert.Equal(nameof(MockExternalRagAdapter), response.ResultMetadata.AdapterName);
+        Assert.Equal(RetrievedContextState.Available, response.ResultMetadata.RetrievedContextState);
     }
 
     [Fact]
@@ -93,7 +163,7 @@ public sealed class ApplicationConfigurationTests
                 ["AiAnalysis:Provider"] = LlmProviderNames.DeepSeek,
                 ["AiAnalysis:DeepSeek:Model"] = "deepseek-chat",
                 ["AiAnalysis:DeepSeek:BaseUrl"] = "https://api.deepseek.com",
-                ["AiAnalysis:DeepSeek:ApiKey"] = "test-api-key"
+                ["AiAnalysis:DeepSeek:ApiKey"] = NonSecretConfigurationValue
             })
             .Build();
         var services = new ServiceCollection();
@@ -136,6 +206,59 @@ public sealed class ApplicationConfigurationTests
             Path.Combine(contentRootPath, "App_Data", "test.db"),
             dbContext.Database.GetConnectionString(),
             StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ApplyApplicationPersistenceMigrations_CreatesMissingSqliteDatabaseWithCurrentSchema()
+    {
+        var contentRootPath = CreateTempDirectory();
+        var databasePath = Path.Combine(contentRootPath, "App_Data", "application.db");
+
+        try
+        {
+            var configuration = new ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:ApplicationDb"] = "Data Source=App_Data/application.db"
+                })
+                .Build();
+
+            var services = new ServiceCollection();
+            services.AddApplicationPersistence(configuration, contentRootPath);
+
+            using var serviceProvider = services.BuildServiceProvider();
+
+            Assert.False(File.Exists(databasePath));
+
+            await serviceProvider.ApplyApplicationPersistenceMigrationsAsync();
+
+            Assert.True(File.Exists(databasePath));
+
+            await using var connection = new SqliteConnection($"Data Source={databasePath}");
+            await connection.OpenAsync();
+
+            var tableNames = await ReadTableNamesAsync(connection);
+
+            Assert.Contains("__EFMigrationsHistory", tableNames);
+            Assert.Contains("Analyses", tableNames);
+            Assert.Contains("AiAnalysisResults", tableNames);
+            Assert.Contains("RetrievedContextItems", tableNames);
+
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT COUNT(*) FROM Analyses";
+
+            var analysisCount = Assert.IsType<long>(await command.ExecuteScalarAsync());
+            Assert.Equal(0L, analysisCount);
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+
+            if (Directory.Exists(contentRootPath))
+            {
+                Directory.Delete(contentRootPath, recursive: true);
+            }
+        }
     }
 
     [Fact]
@@ -186,6 +309,25 @@ public sealed class ApplicationConfigurationTests
             .Build();
     }
 
+    private static AiAnalysisRequest CreateAnalysisRequest()
+    {
+        var snapshot = new AnalysisInputSnapshot(
+            AnalysisId: Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            Analysis: new AnalysisInputFields(
+                Title: "Gateway migration",
+                OriginalDescription: "Original requirement",
+                ProjectRequest: "Project request",
+                SituationDescription: "Current situation",
+                ChangeSource: "Change source"),
+            ContextFragments: []);
+
+        return new AiAnalysisRequest(
+            InputSnapshot: snapshot,
+            InputSnapshotJson: "{\"analysisId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\"}",
+            ExpectedResult: ExpectedAnalysisResultStructure.Default,
+            BoundaryNotice: AnalysisBoundaryNotice.Default);
+    }
+
     private static string GetWebProjectPath()
     {
         return Path.GetFullPath(Path.Combine(
@@ -197,5 +339,31 @@ public sealed class ApplicationConfigurationTests
             "..",
             "src",
             "RequirementImpactAssistant.Web"));
+    }
+
+    private static string CreateTempDirectory()
+    {
+        var directoryPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+
+        Directory.CreateDirectory(directoryPath);
+
+        return directoryPath;
+    }
+
+    private static async Task<HashSet<string>> ReadTableNamesAsync(SqliteConnection connection)
+    {
+        var tableNames = new HashSet<string>(StringComparer.Ordinal);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT name FROM sqlite_master WHERE type = 'table'";
+
+        await using var reader = await command.ExecuteReaderAsync();
+
+        while (await reader.ReadAsync())
+        {
+            tableNames.Add(reader.GetString(0));
+        }
+
+        return tableNames;
     }
 }

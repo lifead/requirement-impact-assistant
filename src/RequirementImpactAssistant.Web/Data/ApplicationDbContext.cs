@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using RequirementImpactAssistant.Web.Domain;
+using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
 using System.Text.Json;
 
@@ -20,6 +21,19 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             : JsonSerializer.Deserialize<List<Guid>>(value, JsonSerializerOptions) ?? new List<Guid>());
 
     private static readonly ValueComparer<List<Guid>> GuidListValueComparer = new(
+        (left, right) => left != null && right != null && left.SequenceEqual(right),
+        value => value.Aggregate(0, (hash, item) => HashCode.Combine(hash, item.GetHashCode())),
+        value => value.ToList());
+
+    private static readonly ValueConverter<List<string>, string?> StringListJsonConverter = new(
+        value => value.Count == 0
+            ? null
+            : JsonSerializer.Serialize(value, JsonSerializerOptions),
+        value => string.IsNullOrWhiteSpace(value)
+            ? new List<string>()
+            : JsonSerializer.Deserialize<List<string>>(value, JsonSerializerOptions) ?? new List<string>());
+
+    private static readonly ValueComparer<List<string>> StringListValueComparer = new(
         (left, right) => left != null && right != null && left.SequenceEqual(right),
         value => value.Aggregate(0, (hash, item) => HashCode.Combine(hash, item.GetHashCode())),
         value => value.ToList());
@@ -52,6 +66,64 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
         ConfigureExpertMissedItem(modelBuilder.Entity<ExpertMissedItem>());
         ConfigureExpertCorrection(modelBuilder.Entity<ExpertCorrection>());
         ConfigureExpertConclusion(modelBuilder.Entity<ExpertConclusion>());
+    }
+
+    public override int SaveChanges()
+    {
+        AssignRetrievedContextItemOrdinals();
+
+        return base.SaveChanges();
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        AssignRetrievedContextItemOrdinals();
+
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)
+    {
+        AssignRetrievedContextItemOrdinals();
+
+        return base.SaveChangesAsync(cancellationToken);
+    }
+
+    public override Task<int> SaveChangesAsync(
+        bool acceptAllChangesOnSuccess,
+        CancellationToken cancellationToken = default)
+    {
+        AssignRetrievedContextItemOrdinals();
+
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void AssignRetrievedContextItemOrdinals()
+    {
+        ChangeTracker.DetectChanges();
+
+        foreach (var resultEntry in ChangeTracker.Entries<AiAnalysisResult>())
+        {
+            if (resultEntry.State is EntityState.Detached or EntityState.Deleted)
+            {
+                continue;
+            }
+
+            var ordinal = 0;
+
+            foreach (var contextItem in resultEntry.Entity.Metadata.RetrievedContextItems)
+            {
+                var contextItemEntry = Entry(contextItem);
+
+                if (contextItemEntry.State is EntityState.Detached or EntityState.Deleted)
+                {
+                    ordinal++;
+                    continue;
+                }
+
+                contextItemEntry.Property("Ordinal").CurrentValue = ordinal++;
+            }
+        }
     }
 
     private static void ConfigureAnalysis(EntityTypeBuilder<Analysis> entity)
@@ -173,7 +245,103 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
         entity.Property(result => result.ErrorMessage)
             .IsRequired();
 
+        entity.OwnsOne(result => result.Metadata, ConfigureAiAnalysisResultMetadata);
+
+        entity.Navigation(result => result.Metadata)
+            .IsRequired();
+
         entity.OwnsOne(result => result.ImpactMap, ConfigureImpactMap);
+    }
+
+    private static void ConfigureAiAnalysisResultMetadata(
+        OwnedNavigationBuilder<AiAnalysisResult, AiAnalysisResultMetadata> metadata)
+    {
+        metadata.Property(item => item.AnalysisMode)
+            .HasColumnName("AnalysisMode")
+            .HasConversion<string>()
+            .HasMaxLength(50)
+            .HasDefaultValue(AnalysisMode.DirectLlm)
+            .IsRequired();
+
+        metadata.Property(item => item.EngineName)
+            .HasColumnName("MetadataEngineName")
+            .HasMaxLength(200)
+            .IsRequired(false);
+
+        metadata.Property(item => item.ProviderName)
+            .HasColumnName("MetadataProviderName")
+            .HasMaxLength(200);
+
+        metadata.Property(item => item.AdapterName)
+            .HasColumnName("MetadataAdapterName")
+            .HasMaxLength(200);
+
+        metadata.Property(item => item.ModelWorkflowProfileName)
+            .HasColumnName("MetadataModelWorkflowProfileName")
+            .HasMaxLength(200);
+
+        metadata.Property(item => item.RetrievedContextState)
+            .HasColumnName("RetrievedContextState")
+            .HasConversion<string>()
+            .HasMaxLength(50)
+            .HasDefaultValue(RetrievedContextState.Unavailable)
+            .IsRequired();
+
+        metadata.Property(item => item.ManualContextForwardedToExternalAiOrRag)
+            .HasColumnName("ManualContextForwardedToExternalAiOrRag")
+            .HasDefaultValue(false)
+            .IsRequired();
+
+        metadata.Property(item => item.Warnings)
+            .HasColumnName("Warnings")
+            .HasConversion(StringListJsonConverter)
+            .IsRequired(false)
+            .Metadata.SetValueComparer(StringListValueComparer);
+
+        metadata.OwnsMany(item => item.RetrievedContextItems, ConfigureRetrievedContextItem);
+    }
+
+    private static void ConfigureRetrievedContextItem(
+        OwnedNavigationBuilder<AiAnalysisResultMetadata, RetrievedContextItem> item)
+    {
+        item.ToTable("RetrievedContextItems");
+
+        item.WithOwner()
+            .HasForeignKey("AiAnalysisResultId");
+
+        item.Property<Guid>("AiAnalysisResultId");
+
+        item.Property<int>("Ordinal")
+            .ValueGeneratedNever();
+
+        item.HasKey("AiAnalysisResultId", "Ordinal");
+
+        item.Property(contextItem => contextItem.SourceTitle)
+            .HasMaxLength(500)
+            .IsRequired();
+
+        item.Property(contextItem => contextItem.SourceId)
+            .HasMaxLength(300);
+
+        item.Property(contextItem => contextItem.ExternalReference)
+            .HasMaxLength(500);
+
+        item.Property(contextItem => contextItem.FragmentId)
+            .HasMaxLength(300);
+
+        item.Property(contextItem => contextItem.UrlOrReference)
+            .HasMaxLength(1_000);
+
+        item.Property(contextItem => contextItem.ProviderName)
+            .HasMaxLength(200);
+
+        item.Property(contextItem => contextItem.AdapterName)
+            .HasMaxLength(200);
+
+        item.Property(contextItem => contextItem.Completeness)
+            .HasConversion<string>()
+            .HasMaxLength(50)
+            .IsRequired();
     }
 
     private static void ConfigureImpactMap(

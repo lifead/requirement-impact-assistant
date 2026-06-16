@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Data.Sqlite;
@@ -133,12 +132,15 @@ public sealed class AnalysisPagesTests
                 "Task tracker",
                 "Earlier task context.",
                 new DateTimeOffset(2024, 01, 01, 10, 00, 00, TimeSpan.Zero)));
-            analysis.ContextFragments.Add(CreateContextFragment(
+            var fileBackedFragment = CreateContextFragment(
                 analysis.Id,
                 ContextFragmentType.ApiDescription,
                 "API notes",
                 "Latest API context.",
-                new DateTimeOffset(2024, 01, 01, 11, 00, 00, TimeSpan.Zero)));
+                new DateTimeOffset(2024, 01, 01, 11, 00, 00, TimeSpan.Zero));
+            fileBackedFragment.FileName = "gateway-api.md";
+            fileBackedFragment.FilePath = $"data/uploads/{analysis.Id}/gateway-api.md";
+            analysis.ContextFragments.Add(fileBackedFragment);
             otherAnalysis.ContextFragments.Add(CreateContextFragment(
                 otherAnalysis.Id,
                 ContextFragmentType.Comment,
@@ -168,6 +170,8 @@ public sealed class AnalysisPagesTests
                         Assert.Equal(ContextFragmentType.ApiDescription, item.Type);
                         Assert.Equal("API notes", item.Source);
                         Assert.Equal("Latest API context.", item.Text);
+                        Assert.Equal("gateway-api.md", item.FileName);
+                        Assert.Equal($"data/uploads/{analysis.Id}/gateway-api.md", item.FilePath);
                     },
                     item =>
                     {
@@ -278,6 +282,24 @@ public sealed class AnalysisPagesTests
         {
             DeleteDatabase(databasePath);
         }
+    }
+
+    [Fact]
+    public void ReviewPage_SourceRendersAnalysisModeSelectionControls()
+    {
+        var source = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Review.cshtml");
+
+        Assert.Contains("name=\"Input.AnalysisMode\"", source, StringComparison.Ordinal);
+        Assert.Contains("value=\"@nameof(AnalysisMode.DirectLlm)\"", source, StringComparison.Ordinal);
+        Assert.Contains("value=\"@nameof(AnalysisMode.ExternalRag)\"", source, StringComparison.Ordinal);
+        Assert.Contains("? nameof(AnalysisMode.DirectLlm)", source, StringComparison.Ordinal);
+        Assert.Contains(
+            "checked=\"@(selectedAnalysisMode == nameof(AnalysisMode.DirectLlm))\"",
+            source,
+            StringComparison.Ordinal);
+        Assert.Contains("External AI/RAG", source, StringComparison.Ordinal);
+        Assert.Contains("может передавать данные во внешний AI/RAG-контур", source, StringComparison.Ordinal);
+        Assert.Contains("может быть ограничен или недоступен", source, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -426,10 +448,149 @@ public sealed class AnalysisPagesTests
                 var redirect = Assert.IsType<RedirectToPageResult>(result);
 
                 Assert.Equal(analysis.Id, service.LastAnalysisId);
+                Assert.Equal(AnalysisMode.DirectLlm, service.LastAnalysisMode);
                 Assert.Equal(1, service.CallCount);
                 Assert.Equal("/Analyses/Details", redirect.PageName);
                 Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
                 Assert.Equal("Предварительный AI-анализ завершен.", pageModel.AnalysisRunMessage);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ReviewPage_RunAnalysisHandlerPassesExternalRagModeToApplicationService()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.ReadyForAnalysis,
+                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = new CapturingAnalysisExecutionService(new AnalysisExecutionOutcome(
+                    AnalysisExecutionOutcomeKind.Completed,
+                    analysis.Id,
+                    AiAnalysisResultStatus.Completed,
+                    "Analysis completed."));
+                var pageModel = new ReviewModel(dbContext, service)
+                {
+                    Input = new ReviewModel.RunAnalysisInput
+                    {
+                        AnalysisMode = nameof(AnalysisMode.ExternalRag)
+                    }
+                };
+
+                var result = await pageModel.OnPostRunAnalysisAsync(analysis.Id);
+
+                Assert.IsType<RedirectToPageResult>(result);
+                Assert.Equal(analysis.Id, service.LastAnalysisId);
+                Assert.Equal(AnalysisMode.ExternalRag, service.LastAnalysisMode);
+                Assert.Equal(1, service.CallCount);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1")]
+    [InlineData("Unknown")]
+    public async Task ReviewPage_RunAnalysisHandlerRejectsInvalidAnalysisModeBeforeCallingService(
+        string analysisMode)
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.ReadyForAnalysis,
+                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var service = new CapturingAnalysisExecutionService(new AnalysisExecutionOutcome(
+                    AnalysisExecutionOutcomeKind.Completed,
+                    analysis.Id,
+                    AiAnalysisResultStatus.Completed,
+                    "Analysis completed."));
+                var pageModel = new ReviewModel(dbContext, service)
+                {
+                    Input = new ReviewModel.RunAnalysisInput
+                    {
+                        AnalysisMode = analysisMode
+                    }
+                };
+
+                var result = await pageModel.OnPostRunAnalysisAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.Equal(0, service.CallCount);
+                Assert.NotNull(pageModel.Analysis);
+                Assert.False(pageModel.ModelState.IsValid);
+                Assert.Contains(
+                    pageModel.ModelState["Input.AnalysisMode"]!.Errors,
+                    error => error.ErrorMessage.Contains("Analysis mode", StringComparison.Ordinal));
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ReviewPage_RunAnalysisHandlerReturnsNotFoundWhenServiceReportsNotFound()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var missingAnalysisId = Guid.NewGuid();
+                var service = new CapturingAnalysisExecutionService(new AnalysisExecutionOutcome(
+                    AnalysisExecutionOutcomeKind.NotFound,
+                    missingAnalysisId,
+                    ResultStatus: null,
+                    Message: "Analysis not found."));
+                var pageModel = new ReviewModel(dbContext, service);
+
+                var result = await pageModel.OnPostRunAnalysisAsync(missingAnalysisId);
+
+                Assert.IsType<NotFoundResult>(result);
+                Assert.Equal(missingAnalysisId, service.LastAnalysisId);
+                Assert.Equal(AnalysisMode.DirectLlm, service.LastAnalysisMode);
+                Assert.Equal(1, service.CallCount);
             }
         }
         finally
@@ -638,373 +799,26 @@ public sealed class AnalysisPagesTests
         }
     }
 
-    [Theory]
-    [InlineData("context.md")]
-    [InlineData("context.TXT")]
-    [InlineData("context.JsOn")]
-    public async Task DetailsPage_UploadsAllowedContextFileExtensionsCaseInsensitive(string fileName)
-    {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
-
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var analysis = CreateAnalysis(
-                "Gateway migration",
-                AnalysisStatus.ReadyForAnalysis,
-                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = CreateUploadFile(fileName, "Uploaded context text.")
-                    }
-                };
-
-                var result = await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-
-                Assert.IsType<RedirectToPageResult>(result);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var updated = await dbContext.Analyses
-                    .Include(candidate => candidate.ContextFragments)
-                    .SingleAsync(candidate => candidate.Id == analysis.Id);
-                var fragment = Assert.Single(updated.ContextFragments);
-
-                Assert.Equal(fileName, fragment.FileName);
-                Assert.Equal(fileName, fragment.Source);
-                Assert.Equal("Uploaded context text.", fragment.Text);
-                Assert.True(File.Exists(Path.Combine(contentRootPath, fragment.FilePath!)));
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
-    }
-
     [Fact]
-    public async Task DetailsPage_RejectsUnsupportedUploadExtensionWithoutCreatingFragmentOrFile()
+    public void DetailsPage_SourceDoesNotContainContextFileUploadUiOrHandler()
     {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
+        var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+        var detailsModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml.cs");
 
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var originalUpdatedAt = new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero);
-            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.ReadyForAnalysis, originalUpdatedAt);
+        Assert.DoesNotContain("asp-page-handler=\"UploadContextFragment\"", detailsSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("enctype=\"multipart/form-data\"", detailsSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("type=\"file\"", detailsSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("UploadContextFragmentInput", detailsSource, StringComparison.Ordinal);
 
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
+        Assert.DoesNotContain("OnPostUploadContextFragmentAsync", detailsModelSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("UploadContextFragmentInput", detailsModelSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("FileContextFragmentInput", detailsModelSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("IFormFile", detailsModelSource, StringComparison.Ordinal);
 
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = CreateUploadFile("context.pdf", "Unsupported context text.")
-                    }
-                };
-
-                var result = await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-
-                Assert.IsType<PageResult>(result);
-                Assert.False(pageModel.ModelState.IsValid);
-                Assert.NotNull(pageModel.Analysis);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var unchanged = await dbContext.Analyses
-                    .Include(candidate => candidate.ContextFragments)
-                    .SingleAsync(candidate => candidate.Id == analysis.Id);
-
-                Assert.Equal(originalUpdatedAt, unchanged.UpdatedAt);
-                Assert.Empty(unchanged.ContextFragments);
-                Assert.False(Directory.Exists(Path.Combine(contentRootPath, "data", "uploads")));
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
-    }
-
-    [Fact]
-    public async Task DetailsPage_RejectsOversizedUploadWithoutCreatingFragmentOrFile()
-    {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
-
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var originalUpdatedAt = new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero);
-            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.ReadyForAnalysis, originalUpdatedAt);
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = CreateUploadFile("context.md", new byte[1_048_577])
-                    }
-                };
-
-                var result = await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-
-                Assert.IsType<PageResult>(result);
-                Assert.False(pageModel.ModelState.IsValid);
-                Assert.NotNull(pageModel.Analysis);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var unchanged = await dbContext.Analyses
-                    .Include(candidate => candidate.ContextFragments)
-                    .SingleAsync(candidate => candidate.Id == analysis.Id);
-
-                Assert.Equal(originalUpdatedAt, unchanged.UpdatedAt);
-                Assert.Empty(unchanged.ContextFragments);
-                Assert.False(Directory.Exists(Path.Combine(contentRootPath, "data", "uploads")));
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
-    }
-
-    [Fact]
-    public async Task DetailsPage_UploadsContextFileAndStoresMetadataTextAndUpdatedAtWithoutChangingStatus()
-    {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
-
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var originalUpdatedAt = new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero);
-            var analysis = CreateAnalysis("Gateway migration", AnalysisStatus.InputIncomplete, originalUpdatedAt);
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.ApiDescription,
-                        Source = "  API file source  ",
-                        File = CreateUploadFile("payment-api.JSON", "{\"endpoint\":\"/payments\"}")
-                    }
-                };
-                pageModel.ModelState.AddModelError("ContextFragmentInput.Source", "Источник обязателен.");
-                pageModel.ModelState.AddModelError("ContextFragmentInput.Text", "Текст обязателен.");
-
-                var result = await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-                var redirect = Assert.IsType<RedirectToPageResult>(result);
-
-                Assert.Equal("/Analyses/Details", redirect.PageName);
-                Assert.Equal(analysis.Id, redirect.RouteValues?["id"]);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var updated = await dbContext.Analyses
-                    .Include(candidate => candidate.ContextFragments)
-                    .SingleAsync(candidate => candidate.Id == analysis.Id);
-                var fragment = Assert.Single(updated.ContextFragments);
-                var savedPath = Path.Combine(contentRootPath, fragment.FilePath!);
-
-                Assert.Equal(ContextFragmentType.ApiDescription, fragment.Type);
-                Assert.Equal("API file source", fragment.Source);
-                Assert.Equal("payment-api.JSON", fragment.FileName);
-                Assert.Equal("{\"endpoint\":\"/payments\"}", fragment.Text);
-                Assert.StartsWith($"data/uploads/{analysis.Id}/", fragment.FilePath);
-                Assert.EndsWith(".json", fragment.FilePath);
-                Assert.Equal("{\"endpoint\":\"/payments\"}", await File.ReadAllTextAsync(savedPath));
-                Assert.True(updated.UpdatedAt > originalUpdatedAt);
-                Assert.Equal(AnalysisStatus.InputIncomplete, updated.Status);
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
-    }
-
-    [Fact]
-    public async Task DetailsPage_UsesSafeUniqueStoredFileNamesWithoutOverwritingExistingUpload()
-    {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
-
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var analysis = CreateAnalysis(
-                "Gateway migration",
-                AnalysisStatus.ReadyForAnalysis,
-                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                const string unsafeFileName = @"..\nested/shared-name.md";
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = CreateUploadFile(unsafeFileName, "First upload.")
-                    }
-                };
-
-                await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                const string unsafeFileName = @"..\nested/shared-name.md";
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = CreateUploadFile(unsafeFileName, "Second upload.")
-                    }
-                };
-
-                await pageModel.OnPostUploadContextFragmentAsync(analysis.Id);
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var fragments = await dbContext.ContextFragments
-                    .Where(candidate => candidate.AnalysisId == analysis.Id)
-                    .ToListAsync();
-
-                Assert.Equal(2, fragments.Count);
-                Assert.All(fragments, fragment =>
-                {
-                    Assert.Equal("shared-name.md", fragment.FileName);
-                    Assert.DoesNotContain("..", fragment.FileName);
-                    Assert.DoesNotContain("/", fragment.FileName);
-                    Assert.DoesNotContain("\\", fragment.FileName);
-                    Assert.DoesNotContain("shared-name", fragment.FilePath);
-                    Assert.DoesNotContain("..", fragment.FilePath);
-                    Assert.True(File.Exists(Path.Combine(contentRootPath, fragment.FilePath!)));
-                });
-                Assert.NotEqual(fragments[0].FilePath, fragments[1].FilePath);
-                Assert.Contains(
-                    fragments,
-                    fragment => File.ReadAllText(Path.Combine(contentRootPath, fragment.FilePath!)) == "First upload.");
-                Assert.Contains(
-                    fragments,
-                    fragment => File.ReadAllText(Path.Combine(contentRootPath, fragment.FilePath!)) == "Second upload.");
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
-    }
-
-    [Fact]
-    public async Task DetailsPage_RemovesStoredUploadFileWhenDatabaseSaveFails()
-    {
-        var databasePath = CreateDatabasePath();
-        var contentRootPath = CreateContentRootPath();
-
-        try
-        {
-            var options = CreateOptions(databasePath);
-            var analysis = CreateAnalysis(
-                "Gateway migration",
-                AnalysisStatus.ReadyForAnalysis,
-                new DateTimeOffset(2024, 01, 01, 08, 00, 00, TimeSpan.Zero));
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                await dbContext.Database.MigrateAsync();
-                dbContext.Analyses.Add(analysis);
-                await dbContext.SaveChangesAsync();
-            }
-
-            await using (var dbContext = new ApplicationDbContext(options))
-            {
-                var pageModel = new DetailsModel(dbContext, new TestWebHostEnvironment(contentRootPath))
-                {
-                    UploadContextFragmentInput = new DetailsModel.FileContextFragmentInput
-                    {
-                        Type = ContextFragmentType.Task,
-                        File = new CallbackFormFile(
-                            "context.md",
-                            "Uploaded context text.",
-                            () => DropContextFragmentsTable(databasePath))
-                    }
-                };
-
-                await Assert.ThrowsAsync<DbUpdateException>(
-                    () => pageModel.OnPostUploadContextFragmentAsync(analysis.Id));
-
-                var uploadsRoot = Path.Combine(contentRootPath, "data", "uploads");
-                Assert.False(Directory.Exists(uploadsRoot) && Directory.EnumerateFiles(uploadsRoot, "*", SearchOption.AllDirectories).Any());
-            }
-        }
-        finally
-        {
-            DeleteDatabase(databasePath);
-            DeleteDirectory(contentRootPath);
-        }
+        Assert.Contains("asp-page-handler=\"AddContextFragment\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("ContextFragmentInput.Text", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("string? FileName", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("string? FilePath", detailsModelSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1301,6 +1115,447 @@ public sealed class AnalysisPagesTests
         {
             DeleteDatabase(databasePath);
         }
+    }
+
+    [Fact]
+    public async Task DetailsPage_DirectLlmResultMetadataShowsDirectLlmWithoutRetrievedContextBasis()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.Completed, CreateImpactMap());
+            aiResult.Metadata = AiAnalysisResultMetadata.CreateDefaultDirectLlm(
+                engineName: "direct-llm-engine",
+                providerName: "demo-provider",
+                modelWorkflowProfileName: "demo-profile");
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(AnalysisMode.DirectLlm, metadata.AnalysisMode);
+                Assert.Equal("Direct LLM", AnalysisUiText.AnalysisModeLabel(metadata.AnalysisMode));
+                Assert.Equal("direct-llm-engine", metadata.EngineName);
+                Assert.Equal("demo-provider", metadata.ProviderName);
+                Assert.Equal("demo-profile", metadata.ModelWorkflowProfileName);
+                Assert.Equal("{ \"raw\": \"response\" }", pageModel.Analysis.AiAnalysisResult.RawResponse);
+                Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
+                Assert.Equal(
+                    "Контекст не сохранен",
+                    AnalysisUiText.RetrievedContextStateLabel(metadata.RetrievedContextState));
+                Assert.False(metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Empty(metadata.Warnings);
+                Assert.Empty(metadata.RetrievedContextItems);
+            }
+
+            var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+            Assert.DoesNotContain("основан на извлеченном контексте", detailsSource, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_ExternalResultMetadataShowsSavedExternalSummaryAndWarnings()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.CompletedWithWarnings,
+                CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                ProviderName = "neutral-provider",
+                AdapterName = "neutral-adapter",
+                ModelWorkflowProfileName = "impact-profile",
+                RetrievedContextState = RetrievedContextState.Partial,
+                ManualContextForwardedToExternalAiOrRag = true,
+                Warnings =
+                [
+                    "Retrieved context was partial.",
+                    "Manual context forwarding was limited."
+                ]
+            };
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(AnalysisMode.ExternalRag, metadata.AnalysisMode);
+                Assert.Equal("External AI/RAG", AnalysisUiText.AnalysisModeLabel(metadata.AnalysisMode));
+                Assert.Equal("external-analysis-engine", metadata.EngineName);
+                Assert.Equal("neutral-provider", metadata.ProviderName);
+                Assert.Equal("neutral-adapter", metadata.AdapterName);
+                Assert.Equal("impact-profile", metadata.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.Partial, metadata.RetrievedContextState);
+                Assert.Equal(
+                    "Контекст сохранен частично",
+                    AnalysisUiText.RetrievedContextStateLabel(metadata.RetrievedContextState));
+                Assert.True(metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Equal(
+                    "Передавался во внешний контур",
+                    AnalysisUiText.ManualContextForwardingLabel(metadata.ManualContextForwardedToExternalAiOrRag));
+                Assert.Collection(
+                    metadata.Warnings,
+                    warning => Assert.Equal("Retrieved context was partial.", warning),
+                    warning => Assert.Equal("Manual context forwarding was limited.", warning));
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_AvailableRetrievedContextShowsSavedTextAndNeutralMetadata()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            analysis.ContextFragments.Add(CreateContextFragment(
+                analysis.Id,
+                ContextFragmentType.Task,
+                "Manual task context",
+                "Manual context must stay separate.",
+                new DateTimeOffset(2026, 06, 13, 08, 30, 00, TimeSpan.Zero)));
+
+            var aiResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.Completed, CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                ProviderName = "result-level-provider",
+                AdapterName = "result-level-adapter",
+                RetrievedContextState = RetrievedContextState.Available,
+                RetrievedContextItems =
+                [
+                    new RetrievedContextItem
+                    {
+                        SourceTitle = "Gateway API requirement",
+                        SourceId = "REQ-42",
+                        ExternalReference = "kb-doc-42",
+                        FragmentId = "fragment-7",
+                        Text = "Saved full retrieved context text.",
+                        UrlOrReference = "kb://requirements/REQ-42",
+                        Rank = 1,
+                        Score = 0.92,
+                        ProviderName = "item-provider-should-not-be-projected",
+                        AdapterName = "item-adapter-should-not-be-projected",
+                        Completeness = RetrievedContextItemCompleteness.FullText
+                    }
+                ]
+            };
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(RetrievedContextState.Available, metadata.RetrievedContextState);
+                var item = Assert.Single(metadata.RetrievedContextItems);
+                Assert.Equal("Gateway API requirement", item.SourceTitle);
+                Assert.Equal("REQ-42", item.SourceId);
+                Assert.Equal("kb-doc-42", item.ExternalReference);
+                Assert.Equal("fragment-7", item.FragmentId);
+                Assert.Equal("Saved full retrieved context text.", item.Text);
+                Assert.Null(item.Excerpt);
+                Assert.Equal("kb://requirements/REQ-42", item.UrlOrReference);
+                Assert.Equal(1, item.Rank);
+                Assert.Equal(0.92, item.Score);
+                Assert.Equal(RetrievedContextItemCompleteness.FullText, item.Completeness);
+                Assert.Null(item.WarningOrLimitationNote);
+                Assert.DoesNotContain(
+                    nameof(RetrievedContextItem.ProviderName),
+                    typeof(DetailsModel.RetrievedContextItemDetails).GetProperties().Select(property => property.Name));
+                Assert.DoesNotContain(
+                    nameof(RetrievedContextItem.AdapterName),
+                    typeof(DetailsModel.RetrievedContextItemDetails).GetProperties().Select(property => property.Name));
+                Assert.Single(pageModel.Analysis.ContextFragments);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_MetadataOnlyRetrievedContextDoesNotPretendFullTextExists()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.Completed, CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                RetrievedContextState = RetrievedContextState.MetadataOnly,
+                RetrievedContextItems =
+                [
+                    new RetrievedContextItem
+                    {
+                        SourceTitle = "Integration inventory",
+                        ExternalReference = "inventory-record-12",
+                        UrlOrReference = "kb://inventory/12",
+                        Rank = 2,
+                        Score = 0.81,
+                        Completeness = RetrievedContextItemCompleteness.MetadataOnly,
+                        WarningOrLimitationNote = "External circuit returned source metadata without fragment text."
+                    }
+                ]
+            };
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(RetrievedContextState.MetadataOnly, metadata.RetrievedContextState);
+                Assert.Equal(
+                    "Сохранены только сведения об источниках; полный текст и выдержки не сохранены.",
+                    AnalysisUiText.RetrievedContextStateDescription(metadata.RetrievedContextState));
+                var item = Assert.Single(metadata.RetrievedContextItems);
+                Assert.Equal(RetrievedContextItemCompleteness.MetadataOnly, item.Completeness);
+                Assert.Null(item.Text);
+                Assert.Null(item.Excerpt);
+                Assert.Equal("Integration inventory", item.SourceTitle);
+                Assert.Equal("inventory-record-12", item.ExternalReference);
+                Assert.Equal("External circuit returned source metadata without fragment text.", item.WarningOrLimitationNote);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_PartialRetrievedContextShowsLimitationAndSavedTextExcerptMix()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.CompletedWithWarnings, CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                RetrievedContextState = RetrievedContextState.Partial,
+                RetrievedContextItems =
+                [
+                    new RetrievedContextItem
+                    {
+                        SourceTitle = "Partial source",
+                        Text = "Saved full text.",
+                        Excerpt = "Saved excerpt.",
+                        Rank = 1,
+                        Completeness = RetrievedContextItemCompleteness.FullText,
+                        WarningOrLimitationNote = "Only part of retrieved basis was available for saved display."
+                    }
+                ],
+                Warnings = ["Retrieved context was partial."]
+            };
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(RetrievedContextState.Partial, metadata.RetrievedContextState);
+                Assert.Contains("ограничения", AnalysisUiText.RetrievedContextStateDescription(metadata.RetrievedContextState));
+                var item = Assert.Single(metadata.RetrievedContextItems);
+                Assert.Equal("Partial source", item.SourceTitle);
+                Assert.Equal("Saved full text.", item.Text);
+                Assert.Equal("Saved excerpt.", item.Excerpt);
+                Assert.Equal(RetrievedContextItemCompleteness.FullText, item.Completeness);
+                Assert.Equal("Only part of retrieved basis was available for saved display.", item.WarningOrLimitationNote);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_UnavailableRetrievedContextShowsReproducibilityLimitation()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(analysis.Id, AiAnalysisResultStatus.CompletedWithWarnings, CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                RetrievedContextState = RetrievedContextState.Unavailable,
+                Warnings = ["Retrieved context was unavailable."]
+            };
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
+                Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
+                Assert.Empty(metadata.RetrievedContextItems);
+                Assert.Contains(
+                    "воспроизводимость",
+                    AnalysisUiText.RetrievedContextStateDescription(metadata.RetrievedContextState));
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public void DetailsPage_SourceDoesNotContainProviderSpecificUiPayloadFields()
+    {
+        var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+        var detailsModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml.cs");
+        var combinedSource = detailsSource + detailsModelSource;
+
+        var forbiddenTokens = new[]
+        {
+            "Dify",
+            "DifyExternal",
+            "workflow_run_id",
+            "workflow_id",
+            "task_id",
+            "manual_context",
+            "providerStatus",
+            "responseShape",
+            "SanitizedDiagnosticSnapshot",
+            "SanitizedProperties"
+        };
+
+        Assert.All(
+            forbiddenTokens,
+            token => Assert.DoesNotContain(token, combinedSource, StringComparison.OrdinalIgnoreCase));
+
+        Assert.Contains("@aiResult.RawResponse", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("string RawResponse", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("RetrievedContextItems", combinedSource, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2282,6 +2537,23 @@ public sealed class AnalysisPagesTests
             Path.GetTempPath(),
             $"requirement-impact-assistant-content-{Guid.NewGuid():N}");
 
+    private static string ReadProjectFile(string relativePath) =>
+        File.ReadAllText(Path.Combine(FindRepositoryRoot(), relativePath));
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null &&
+               !File.Exists(Path.Combine(directory.FullName, "RequirementImpactAssistant.sln")))
+        {
+            directory = directory.Parent;
+        }
+
+        return directory?.FullName
+            ?? throw new DirectoryNotFoundException("Repository root was not found.");
+    }
+
     private static DbContextOptions<ApplicationDbContext> CreateOptions(string databasePath) =>
         new DbContextOptionsBuilder<ApplicationDbContext>()
             .UseSqlite($"Data Source={databasePath}")
@@ -2468,32 +2740,6 @@ public sealed class AnalysisPagesTests
         impactMap.PreliminaryAssessment
     ];
 
-    private static IFormFile CreateUploadFile(string fileName, string content)
-    {
-        var bytes = System.Text.Encoding.UTF8.GetBytes(content);
-
-        return CreateUploadFile(fileName, bytes);
-    }
-
-    private static IFormFile CreateUploadFile(string fileName, byte[] bytes)
-    {
-        var stream = new MemoryStream(bytes);
-
-        return new FormFile(stream, 0, bytes.Length, "UploadContextFragmentInput.File", fileName);
-    }
-
-    private static void DropContextFragmentsTable(string databasePath)
-    {
-        SqliteConnection.ClearAllPools();
-
-        using var connection = new SqliteConnection($"Data Source={databasePath}");
-        connection.Open();
-
-        using var command = connection.CreateCommand();
-        command.CommandText = "DROP TABLE ContextFragments";
-        command.ExecuteNonQuery();
-    }
-
     private static void DeleteDatabase(string databasePath)
     {
         SqliteConnection.ClearAllPools();
@@ -2534,45 +2780,26 @@ public sealed class AnalysisPagesTests
 
         public Guid LastAnalysisId { get; private set; }
 
+        public AnalysisMode LastAnalysisMode { get; private set; } = AnalysisMode.DirectLlm;
+
         public Task<AnalysisExecutionOutcome> RunAsync(
             Guid analysisId,
             CancellationToken cancellationToken = default)
         {
+            return RunAsync(analysisId, AnalysisMode.DirectLlm, cancellationToken);
+        }
+
+        public Task<AnalysisExecutionOutcome> RunAsync(
+            Guid analysisId,
+            AnalysisMode analysisMode,
+            CancellationToken cancellationToken = default)
+        {
             CallCount++;
             LastAnalysisId = analysisId;
+            LastAnalysisMode = analysisMode;
 
             return Task.FromResult(outcome);
         }
     }
 
-    private sealed class CallbackFormFile(string fileName, string content, Action afterCopy) : IFormFile
-    {
-        private readonly byte[] bytes = System.Text.Encoding.UTF8.GetBytes(content);
-
-        public string ContentType => "text/markdown";
-
-        public string ContentDisposition => string.Empty;
-
-        public IHeaderDictionary Headers { get; set; } = new HeaderDictionary();
-
-        public long Length => bytes.Length;
-
-        public string Name => "UploadContextFragmentInput.File";
-
-        public string FileName => fileName;
-
-        public void CopyTo(Stream target)
-        {
-            target.Write(bytes);
-            afterCopy();
-        }
-
-        public async Task CopyToAsync(Stream target, CancellationToken cancellationToken = default)
-        {
-            await target.WriteAsync(bytes, cancellationToken);
-            afterCopy();
-        }
-
-        public Stream OpenReadStream() => new MemoryStream(bytes);
-    }
 }

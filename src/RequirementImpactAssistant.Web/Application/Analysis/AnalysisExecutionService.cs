@@ -14,28 +14,36 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
 
     private readonly ApplicationDbContext _dbContext;
     private readonly IAnalysisInputAssembler _inputAssembler;
-    private readonly IAiAnalysisEngine _analysisEngine;
+    private readonly IAiAnalysisEngineSelector _analysisEngineSelector;
     private readonly AiAnalysisOptions _options;
 
     public AnalysisExecutionService(
         ApplicationDbContext dbContext,
         IAnalysisInputAssembler inputAssembler,
-        IAiAnalysisEngine analysisEngine,
+        IAiAnalysisEngineSelector analysisEngineSelector,
         IOptions<AiAnalysisOptions> options)
     {
         _dbContext = dbContext;
         _inputAssembler = inputAssembler;
-        _analysisEngine = analysisEngine;
+        _analysisEngineSelector = analysisEngineSelector;
         _options = options.Value;
     }
 
     public async Task<AnalysisExecutionOutcome> RunAsync(
         Guid analysisId,
+        CancellationToken cancellationToken = default) =>
+        await RunAsync(analysisId, AnalysisMode.DirectLlm, cancellationToken)
+            .ConfigureAwait(false);
+
+    public async Task<AnalysisExecutionOutcome> RunAsync(
+        Guid analysisId,
+        AnalysisMode analysisMode,
         CancellationToken cancellationToken = default)
     {
         var analysis = await _dbContext.Analyses
             .Include(candidate => candidate.ContextFragments)
             .Include(candidate => candidate.AiAnalysisResult)
+            .ThenInclude(result => result!.Metadata.RetrievedContextItems)
             .Include(candidate => candidate.ExpertEvaluation)
             .Include(candidate => candidate.ExpertConclusion)
             .SingleOrDefaultAsync(candidate => candidate.Id == analysisId, cancellationToken)
@@ -69,7 +77,8 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
         }
 
         var request = _inputAssembler.Assemble(analysis);
-        var response = await _analysisEngine
+        var analysisEngine = _analysisEngineSelector.Select(analysisMode);
+        var response = await analysisEngine
             .AnalyzeAsync(request, cancellationToken)
             .ConfigureAwait(false);
 
@@ -78,12 +87,33 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
         {
             AnalysisId = analysis.Id
         };
+        var fallbackEngineName = analysisEngine.GetType().Name;
+        var fallbackProviderName = _options.Provider;
+        var fallbackModelName = ResolveModelName(_options);
+        var resultMetadata = response.ResultMetadata
+            ?? AiAnalysisResultMetadata.CreateDefaultDirectLlm(
+                fallbackEngineName,
+                fallbackProviderName,
+                fallbackModelName,
+                GetDirectLlmWarnings(response));
+        var engineName = ResolveRequiredMetadataValue(
+            resultMetadata.EngineName,
+            fallbackEngineName);
+        var providerName = ResolveRequiredMetadataValue(
+            resultMetadata.ProviderName,
+            fallbackProviderName);
+        var modelName = ResolveRequiredMetadataValue(
+            resultMetadata.ModelWorkflowProfileName,
+            fallbackModelName);
+
+        AssignRetrievedContextItemOrdinals(resultMetadata);
 
         result.Status = resultStatus;
         result.GeneratedAt = DateTimeOffset.UtcNow;
-        result.EngineName = _analysisEngine.GetType().Name;
-        result.ProviderName = _options.Provider;
-        result.ModelName = ResolveModelName(_options);
+        result.EngineName = engineName;
+        result.ProviderName = providerName;
+        result.ModelName = modelName;
+        result.Metadata = resultMetadata;
         result.PromptVersion = PromptVersion;
         result.InputSnapshot = request.InputSnapshotJson;
         result.RawResponse = response.RawResponse ?? string.Empty;
@@ -108,6 +138,16 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
             analysis.Id,
             resultStatus,
             CreateCompletionMessage(resultStatus));
+    }
+
+    private void AssignRetrievedContextItemOrdinals(AiAnalysisResultMetadata metadata)
+    {
+        var ordinal = 0;
+
+        foreach (var contextItem in metadata.RetrievedContextItems)
+        {
+            _dbContext.Entry(contextItem).Property("Ordinal").CurrentValue = ordinal++;
+        }
     }
 
     private static bool HasMinimumInput(DomainAnalysis analysis) =>
@@ -136,6 +176,11 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
         response.Errors.Any(error =>
             error.Contains("LLM response is invalid", StringComparison.OrdinalIgnoreCase));
 
+    private static IReadOnlyList<string> GetDirectLlmWarnings(AiAnalysisResponse response) =>
+        response.Status == AiAnalysisResponseStatus.Partial
+            ? response.Errors
+            : [];
+
     private static string ResolveModelName(AiAnalysisOptions options)
     {
         if (string.Equals(options.Provider, LlmProviderNames.Demo, StringComparison.OrdinalIgnoreCase))
@@ -150,6 +195,11 @@ public sealed class AnalysisExecutionService : IAnalysisExecutionService
 
         return string.Empty;
     }
+
+    private static string ResolveRequiredMetadataValue(string? metadataValue, string fallbackValue) =>
+        string.IsNullOrWhiteSpace(metadataValue)
+            ? fallbackValue
+            : metadataValue;
 
     private static string CreateCompletionMessage(AiAnalysisResultStatus status) =>
         status switch
