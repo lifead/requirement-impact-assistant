@@ -142,20 +142,24 @@ internal static class DifyExternalRagMapper
                 errorCode: "dify_empty_stream_response",
                 errorMessage: "Dify external RAG provider stream did not contain an answer.",
                 diagnosticDetails: "The SSE stream did not produce a usable agent_message answer fragment.",
-                warnings: CreateStreamingWarnings(
+                warnings: CreateStreamingWarningsWithoutAnswer(
                     streamResult,
                     "Dify external RAG provider stream did not contain an answer."));
         }
 
-        var metadata = CreateStreamingMetadata(request, streamResult, options, providerStatus);
+        var answerParseResult = DifyAgentAnswerJsonParser.Parse(streamResult.Answer);
+        var metadata = CreateStreamingMetadata(request, streamResult, answerParseResult, options, providerStatus);
         var warnings = CreateStreamingWarnings(
             streamResult,
-            "Dify Agent SSE answer was received; structured answer parsing is handled by a later adapter task.");
+            answerParseResult,
+            answerParseResult.HasStructuredJson
+                ? "Dify Agent answer JSON was parsed; structured response mapping is handled by a later adapter task."
+                : "Dify Agent answer JSON was not parsed; sanitized raw answer fallback was retained.");
         const RetrievedContextState retrievedContextState = RetrievedContextState.Unavailable;
 
         return new ExternalRagAdapterResponse(
             Status: ExternalRagAdapterResponseStatus.Partial,
-            ImpactMap: CreateStreamingIntermediateImpactMap(streamResult),
+            ImpactMap: CreateStreamingIntermediateImpactMap(streamResult, answerParseResult),
             Metadata: metadata,
             RetrievedContextState: retrievedContextState,
             RetrievedContextItems: [],
@@ -295,6 +299,7 @@ internal static class DifyExternalRagMapper
     private static ExternalRagAdapterResponseMetadata CreateStreamingMetadata(
         ExternalRagAdapterRequest request,
         DifyAgentSseParseResult streamResult,
+        DifyAgentAnswerParseResult answerParseResult,
         DifyExternalRagOptions options,
         string providerStatus)
     {
@@ -306,7 +311,12 @@ internal static class DifyExternalRagMapper
             ["answerFragmentCount"] = streamResult.AnswerFragments.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["hasMalformedEvents"] = streamResult.HasMalformedEvents ? bool.TrueString.ToLowerInvariant() : bool.FalseString.ToLowerInvariant(),
             ["agentThoughtEventCount"] = streamResult.AgentThoughtEventCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["unknownEventCount"] = streamResult.UnknownEventCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            ["unknownEventCount"] = streamResult.UnknownEventCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["answerParseStatus"] = answerParseResult.HasStructuredJson ? "parsed-json" : "raw-text-fallback",
+            ["answerParseMode"] = CreateAnswerParseMode(answerParseResult.ParseMode),
+            ["rawAnswerFallbackRetained"] = answerParseResult.SanitizedRawText is null
+                ? bool.FalseString.ToLowerInvariant()
+                : bool.TrueString.ToLowerInvariant()
         };
 
         if (!string.IsNullOrWhiteSpace(streamResult.MessageEndMetadata?.MessageId))
@@ -334,14 +344,20 @@ internal static class DifyExternalRagMapper
             SanitizedProperties: sanitizedProperties);
     }
 
-    private static ImpactMap CreateStreamingIntermediateImpactMap(DifyAgentSseParseResult streamResult)
+    private static ImpactMap CreateStreamingIntermediateImpactMap(
+        DifyAgentSseParseResult streamResult,
+        DifyAgentAnswerParseResult answerParseResult)
     {
         var impactMap = new ImpactMap();
-        impactMap.ChangeSummary.Title = "Dify Agent streaming answer received";
-        impactMap.ChangeSummary.Description =
-            "The adapter received a streaming Agent answer through the Dify Service API. Structured answer parsing is not part of this task.";
+        impactMap.ChangeSummary.Title = answerParseResult.HasStructuredJson
+            ? "Dify Agent structured answer parsed"
+            : "Dify Agent raw answer fallback retained";
+        impactMap.ChangeSummary.Description = answerParseResult.HasStructuredJson
+            ? "The adapter parsed the streaming Agent answer as JSON. Structured response mapping is handled by a later adapter task."
+            : answerParseResult.SanitizedRawText ?? "The adapter retained no raw answer text because the Agent answer was empty.";
         impactMap.ChangeSummary.Severity = ImpactSeverity.NotSpecified;
-        impactMap.ChangeSummary.Notes = $"SSE answer fragments received: {streamResult.AnswerFragments.Count}.";
+        impactMap.ChangeSummary.Notes =
+            $"SSE answer fragments received: {streamResult.AnswerFragments.Count}. Answer parse mode: {CreateAnswerParseMode(answerParseResult.ParseMode)}.";
 
         impactMap.PreliminaryAssessment.Title = "Requires structured mapping in the next adapter task";
         impactMap.PreliminaryAssessment.Description =
@@ -353,6 +369,7 @@ internal static class DifyExternalRagMapper
 
     private static IReadOnlyList<string> CreateStreamingWarnings(
         DifyAgentSseParseResult streamResult,
+        DifyAgentAnswerParseResult answerParseResult,
         string adapterWarning)
     {
         var warnings = streamResult.Warnings
@@ -360,6 +377,9 @@ internal static class DifyExternalRagMapper
             .Select(warning => warning.Trim())
             .ToList();
 
+        warnings.AddRange(answerParseResult.Warnings
+            .Where(warning => !string.IsNullOrWhiteSpace(warning))
+            .Select(warning => warning.Trim()));
         warnings.Add(adapterWarning);
 
         if (streamResult.IsComplete)
@@ -371,6 +391,31 @@ internal static class DifyExternalRagMapper
             .Distinct(StringComparer.Ordinal)
             .ToArray();
     }
+
+    private static IReadOnlyList<string> CreateStreamingWarningsWithoutAnswer(
+        DifyAgentSseParseResult streamResult,
+        string adapterWarning)
+    {
+        var warnings = streamResult.Warnings
+            .Where(warning => !string.IsNullOrWhiteSpace(warning))
+            .Select(warning => warning.Trim())
+            .ToList();
+
+        warnings.Add(adapterWarning);
+
+        return warnings
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string CreateAnswerParseMode(DifyAgentAnswerParseMode parseMode) =>
+        parseMode switch
+        {
+            DifyAgentAnswerParseMode.FullAnswerJson => "full-answer-json",
+            DifyAgentAnswerParseMode.JsonSubstringFallback => "json-substring-fallback",
+            DifyAgentAnswerParseMode.RawTextFallback => "raw-text-fallback",
+            _ => "none"
+        };
 
     private static ImpactMap MapImpactMap(DifyImpactMapDto source)
     {
