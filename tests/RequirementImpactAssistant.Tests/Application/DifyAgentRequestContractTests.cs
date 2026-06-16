@@ -42,6 +42,9 @@ public sealed class DifyAgentRequestContractTests
         Assert.DoesNotContain("blocking", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Authorization", body, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Bearer", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("manual_context", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("boundary_notice", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("expected_result", body, StringComparison.Ordinal);
     }
 
     [Fact]
