@@ -10,6 +10,7 @@ internal static class DifyAgentSseStreamParser
     private const string AgentThoughtEvent = "agent_thought";
     private const string MessageEndEvent = "message_end";
     private const int MaxSafeMetadataValueLength = 200;
+    private const int MaxRetrieverResourceTextLength = 8000;
     private const string UnsupportedUsageMetadataWarning =
         "Dify message_end usage metadata contained an unsupported key that was ignored.";
 
@@ -154,11 +155,19 @@ internal static class DifyAgentSseStreamParser
         var messageId = CreateSafeMetadataValue(GetStringProperty(root, "message_id"), warnings);
         var conversationId = CreateSafeMetadataValue(GetStringProperty(root, "conversation_id"), warnings);
         var usage = CreateSafeUsage(root, warnings);
+        var retrieverResources = CreateRetrieverResources(
+            root,
+            warnings,
+            out var hasRetrieverResourcesMetadata,
+            out var retrieverResourceMetadataItemCount);
 
         return new DifyAgentMessageEndMetadata(
             MessageId: messageId,
             ConversationId: conversationId,
-            Usage: usage);
+            Usage: usage,
+            HasRetrieverResourcesMetadata: hasRetrieverResourcesMetadata,
+            RetrieverResourceMetadataItemCount: retrieverResourceMetadataItemCount,
+            RetrieverResources: retrieverResources);
     }
 
     private static IReadOnlyDictionary<string, string> CreateSafeUsage(
@@ -186,6 +195,101 @@ internal static class DifyAgentSseStreamParser
 
         return safeUsage;
     }
+
+    private static IReadOnlyList<DifyRetrievedContextItemDto> CreateRetrieverResources(
+        JsonElement root,
+        List<string> warnings,
+        out bool hasRetrieverResourcesMetadata,
+        out int retrieverResourceMetadataItemCount)
+    {
+        hasRetrieverResourcesMetadata = false;
+        retrieverResourceMetadataItemCount = 0;
+        if (!root.TryGetProperty("metadata", out var metadata) ||
+            metadata.ValueKind != JsonValueKind.Object ||
+            !metadata.TryGetProperty("retriever_resources", out var retrieverResources))
+        {
+            return [];
+        }
+
+        hasRetrieverResourcesMetadata = true;
+        if (retrieverResources.ValueKind != JsonValueKind.Array)
+        {
+            warnings.Add("Dify message_end retriever_resources metadata was not an array and was ignored.");
+            return [];
+        }
+
+        var mappedResources = new List<DifyRetrievedContextItemDto>();
+        retrieverResourceMetadataItemCount = retrieverResources.GetArrayLength();
+        foreach (var resource in retrieverResources.EnumerateArray())
+        {
+            if (resource.ValueKind != JsonValueKind.Object)
+            {
+                warnings.Add("Dify message_end retriever_resources contained a malformed item that was ignored.");
+                continue;
+            }
+
+            var mappedResource = new DifyRetrievedContextItemDto
+            {
+                SourceTitle = GetFirstStringProperty(
+                    resource,
+                    "document_name",
+                    "source_title",
+                    "title",
+                    "dataset_name"),
+                SourceId = GetFirstStringProperty(
+                    resource,
+                    "document_id",
+                    "source_id",
+                    "dataset_id"),
+                ExternalReference = GetFirstStringProperty(
+                    resource,
+                    "dataset_id",
+                    "dataset_name",
+                    "external_reference"),
+                FragmentId = GetFirstStringProperty(
+                    resource,
+                    "segment_id",
+                    "fragment_id",
+                    "chunk_id"),
+                Text = GetFirstStringProperty(
+                    resource,
+                    "text",
+                    "full_text"),
+                Excerpt = GetFirstStringProperty(
+                    resource,
+                    "content",
+                    "excerpt",
+                    "snippet",
+                    "segment_content"),
+                UrlOrReference = GetFirstStringProperty(
+                    resource,
+                    "url",
+                    "url_or_reference",
+                    "source_url"),
+                Rank = GetFirstIntProperty(resource, "position", "rank"),
+                Score = GetFirstDoubleProperty(resource, "score")
+            };
+
+            if (!HasMappableRetrieverResourceFields(mappedResource))
+            {
+                warnings.Add("Dify message_end retriever_resources contained an empty or unrecognized item that was ignored.");
+                continue;
+            }
+
+            mappedResources.Add(mappedResource);
+        }
+
+        return mappedResources;
+    }
+
+    private static bool HasMappableRetrieverResourceFields(DifyRetrievedContextItemDto resource) =>
+        !string.IsNullOrWhiteSpace(resource.SourceTitle) ||
+        !string.IsNullOrWhiteSpace(resource.SourceId) ||
+        !string.IsNullOrWhiteSpace(resource.ExternalReference) ||
+        !string.IsNullOrWhiteSpace(resource.FragmentId) ||
+        !string.IsNullOrWhiteSpace(resource.Text) ||
+        !string.IsNullOrWhiteSpace(resource.Excerpt) ||
+        !string.IsNullOrWhiteSpace(resource.UrlOrReference);
 
     private static bool TryCreateSafeUsageValue(
         JsonProperty usageProperty,
@@ -264,6 +368,93 @@ internal static class DifyAgentSseStreamParser
 
         return property.GetString();
     }
+
+    private static string? GetFirstStringProperty(JsonElement element, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (!element.TryGetProperty(propertyName, out var property))
+            {
+                continue;
+            }
+
+            var value = property.ValueKind switch
+            {
+                JsonValueKind.String => property.GetString(),
+                JsonValueKind.Number => property.GetRawText(),
+                JsonValueKind.True => bool.TrueString.ToLower(CultureInfo.InvariantCulture),
+                JsonValueKind.False => bool.FalseString.ToLower(CultureInfo.InvariantCulture),
+                _ => null
+            };
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            var normalizedValue = value.Trim();
+            if (normalizedValue.Length > MaxRetrieverResourceTextLength)
+            {
+                return normalizedValue[..MaxRetrieverResourceTextLength];
+            }
+
+            return normalizedValue;
+        }
+
+        return null;
+    }
+
+    private static int? GetFirstIntProperty(JsonElement element, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (!element.TryGetProperty(propertyName, out var property))
+            {
+                continue;
+            }
+
+            if (property.ValueKind == JsonValueKind.Number && property.TryGetInt32(out var intValue))
+            {
+                return intValue;
+            }
+
+            if (property.ValueKind == JsonValueKind.String &&
+                int.TryParse(property.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out intValue))
+            {
+                return intValue;
+            }
+        }
+
+        return null;
+    }
+
+    private static double? GetFirstDoubleProperty(JsonElement element, params string[] propertyNames)
+    {
+        foreach (var propertyName in propertyNames)
+        {
+            if (!element.TryGetProperty(propertyName, out var property))
+            {
+                continue;
+            }
+
+            if (property.ValueKind == JsonValueKind.Number && property.TryGetDouble(out var doubleValue))
+            {
+                return doubleValue;
+            }
+
+            if (property.ValueKind == JsonValueKind.String &&
+                double.TryParse(
+                    property.GetString(),
+                    NumberStyles.Float,
+                    CultureInfo.InvariantCulture,
+                    out doubleValue))
+            {
+                return doubleValue;
+            }
+        }
+
+        return null;
+    }
 }
 
 internal sealed record DifyAgentSseParseResult(
@@ -279,4 +470,7 @@ internal sealed record DifyAgentSseParseResult(
 internal sealed record DifyAgentMessageEndMetadata(
     string? MessageId,
     string? ConversationId,
-    IReadOnlyDictionary<string, string> Usage);
+    IReadOnlyDictionary<string, string> Usage,
+    bool HasRetrieverResourcesMetadata,
+    int RetrieverResourceMetadataItemCount,
+    IReadOnlyList<DifyRetrievedContextItemDto> RetrieverResources);

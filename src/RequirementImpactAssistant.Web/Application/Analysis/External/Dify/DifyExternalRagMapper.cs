@@ -160,9 +160,16 @@ internal static class DifyExternalRagMapper
                     "Dify external RAG provider stream did not contain an answer."));
         }
 
-        const RetrievedContextState retrievedContextState = RetrievedContextState.Unavailable;
         var answerParseResult = DifyAgentAnswerJsonParser.Parse(streamResult.Answer);
-        var warnings = CreateStreamingWarnings(streamResult, answerParseResult);
+        var retrievedContextItems = streamResult.MessageEndMetadata?.RetrieverResources
+            .Select(MapRetrievedContextItem)
+            .ToArray() ?? [];
+        var retrievedContextState = CreateRetrievedContextState(retrievedContextItems);
+        var warnings = CreateStreamingWarnings(
+            streamResult,
+            answerParseResult,
+            retrievedContextState,
+            retrievedContextItems);
         var status = CreateStreamingStatus(streamResult, answerParseResult, warnings);
         var impactMap = answerParseResult.StructuredAnswer is null
             ? CreateRawFallbackImpactMap(streamResult, answerParseResult)
@@ -180,7 +187,7 @@ internal static class DifyExternalRagMapper
             ImpactMap: impactMap,
             Metadata: metadata,
             RetrievedContextState: retrievedContextState,
-            RetrievedContextItems: [],
+            RetrievedContextItems: retrievedContextItems,
             Warnings: warnings,
             Errors: [],
             SanitizedDiagnosticSnapshot: CreateDiagnosticSnapshot(
@@ -190,7 +197,7 @@ internal static class DifyExternalRagMapper
                 options,
                 providerStatus,
                 retrievedContextState,
-                retrievedContextItemCount: 0,
+                retrievedContextItems.Length,
                 warnings,
                 []));
     }
@@ -407,7 +414,9 @@ internal static class DifyExternalRagMapper
 
     private static IReadOnlyList<string> CreateStreamingWarnings(
         DifyAgentSseParseResult streamResult,
-        DifyAgentAnswerParseResult answerParseResult)
+        DifyAgentAnswerParseResult answerParseResult,
+        RetrievedContextState retrievedContextState,
+        IReadOnlyList<RetrievedContextItem> retrievedContextItems)
     {
         var warnings = streamResult.Warnings
             .Where(warning => !string.IsNullOrWhiteSpace(warning))
@@ -427,16 +436,62 @@ internal static class DifyExternalRagMapper
             warnings.AddRange(answerParseResult.StructuredAnswer.Warnings
                 .Where(warning => !string.IsNullOrWhiteSpace(warning))
                 .Select(SanitizeProviderWarning));
-
-            if (streamResult.IsComplete)
-            {
-                warnings.Add("Dify Agent answer was mapped without retrieved context resources; retrieved context mapping is unavailable until the dedicated retriever resources task.");
-            }
         }
+
+        AddRetrievedContextWarnings(
+            streamResult,
+            retrievedContextState,
+            retrievedContextItems,
+            warnings);
 
         return warnings
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static void AddRetrievedContextWarnings(
+        DifyAgentSseParseResult streamResult,
+        RetrievedContextState retrievedContextState,
+        IReadOnlyList<RetrievedContextItem> retrievedContextItems,
+        List<string> warnings)
+    {
+        var messageEndMetadata = streamResult.MessageEndMetadata;
+        if (messageEndMetadata is null)
+        {
+            warnings.Add("Dify message_end metadata did not provide retriever resources; retrieved context is unavailable.");
+            return;
+        }
+
+        if (!messageEndMetadata.HasRetrieverResourcesMetadata)
+        {
+            warnings.Add("Dify message_end metadata did not include retriever_resources; retrieved context is unavailable.");
+            return;
+        }
+
+        if (messageEndMetadata.RetrieverResources.Count == 0 &&
+            messageEndMetadata.RetrieverResourceMetadataItemCount == 0)
+        {
+            warnings.Add("Dify message_end metadata contained empty retriever_resources; retrieved context is unavailable.");
+            return;
+        }
+
+        switch (retrievedContextState)
+        {
+            case RetrievedContextState.Unavailable:
+                warnings.Add("Dify retriever_resources could not be mapped to retrieved context items.");
+                break;
+            case RetrievedContextState.MetadataOnly:
+                warnings.Add("Dify returned retriever resources metadata without source text or excerpts.");
+                break;
+            case RetrievedContextState.Partial:
+                warnings.Add("Dify returned partial retrieved context; full source text was not available for every retriever resource.");
+                break;
+        }
+
+        if (retrievedContextItems.Any(HasIncompleteRetrieverResourceMetadata))
+        {
+            warnings.Add("Dify returned one or more retriever resources with incomplete source metadata.");
+        }
     }
 
     private static ExternalRagAdapterResponseStatus CreateStreamingStatus(
@@ -674,10 +729,18 @@ internal static class DifyExternalRagMapper
     private static RetrievedContextItem MapRetrievedContextItem(DifyRetrievedContextItemDto source)
     {
         var completeness = CreateCompleteness(source);
+        var warningOrLimitationNote = completeness switch
+        {
+            RetrievedContextItemCompleteness.MetadataOnly =>
+                "Dify returned source metadata without excerpt or full text.",
+            RetrievedContextItemCompleteness.ExcerptOnly =>
+                "Dify returned an excerpt without full source text.",
+            _ => null
+        };
 
         return new RetrievedContextItem
         {
-            SourceTitle = NormalizeOptional(source.SourceTitle) ?? "Dify retrieved context",
+            SourceTitle = NormalizeOptional(source.SourceTitle) ?? string.Empty,
             SourceId = NormalizeOptional(source.SourceId),
             ExternalReference = NormalizeOptional(source.ExternalReference),
             FragmentId = NormalizeOptional(source.FragmentId),
@@ -689,11 +752,15 @@ internal static class DifyExternalRagMapper
             ProviderName = ProviderName,
             AdapterName = AdapterName,
             Completeness = completeness,
-            WarningOrLimitationNote = completeness == RetrievedContextItemCompleteness.MetadataOnly
-                ? "Dify returned source metadata without excerpt or full text."
-                : null
+            WarningOrLimitationNote = warningOrLimitationNote
         };
     }
+
+    private static bool HasIncompleteRetrieverResourceMetadata(RetrievedContextItem item) =>
+        string.IsNullOrWhiteSpace(item.SourceTitle) ||
+        string.IsNullOrWhiteSpace(item.SourceId) ||
+        string.IsNullOrWhiteSpace(item.FragmentId) ||
+        item.Score is null;
 
     private static RetrievedContextItemCompleteness CreateCompleteness(DifyRetrievedContextItemDto source)
     {

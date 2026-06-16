@@ -36,6 +36,71 @@ public sealed class DifyAgentSseStreamParserTests
         Assert.Equal("5", result.MessageEndMetadata.Usage["completion_tokens"]);
         Assert.Equal("17", result.MessageEndMetadata.Usage["total_tokens"]);
         Assert.Equal("USD", result.MessageEndMetadata.Usage["currency"]);
+        Assert.False(result.MessageEndMetadata.HasRetrieverResourcesMetadata);
+        Assert.Empty(result.MessageEndMetadata.RetrieverResources);
+    }
+
+    [Fact]
+    public void Parse_MessageEndCollectsRetrieverResourcesWithoutRawProviderPayload()
+    {
+        var payload = """
+            data: {"event":"message_end","message_id":"msg-123","conversation_id":"conv-456","metadata":{"retriever_resources":[{"position":1,"dataset_id":"dataset-1","dataset_name":"Requirements knowledge base","document_id":"document-1","document_name":"Storage cell requirement","segment_id":"segment-1","score":0.875,"content":"Storage cell code must be non-empty."}]}}
+            """;
+
+        var result = DifyAgentSseStreamParser.Parse(payload);
+
+        Assert.True(result.IsComplete);
+        Assert.NotNull(result.MessageEndMetadata);
+        Assert.True(result.MessageEndMetadata.HasRetrieverResourcesMetadata);
+        var resource = Assert.Single(result.MessageEndMetadata.RetrieverResources);
+        Assert.Equal("Storage cell requirement", resource.SourceTitle);
+        Assert.Equal("document-1", resource.SourceId);
+        Assert.Equal("dataset-1", resource.ExternalReference);
+        Assert.Equal("segment-1", resource.FragmentId);
+        Assert.Equal("Storage cell code must be non-empty.", resource.Excerpt);
+        Assert.Equal(1, resource.Rank);
+        Assert.Equal(0.875, resource.Score);
+    }
+
+    [Fact]
+    public void Parse_MessageEndMalformedRetrieverResourcesReturnsWarningAndKeepsUsableMetadata()
+    {
+        var payload = """
+            data: {"event":"message_end","message_id":"msg-123","conversation_id":"conv-456","metadata":{"usage":{"total_tokens":17},"retriever_resources":{"not":"an array"}}}
+            """;
+
+        var result = DifyAgentSseStreamParser.Parse(payload);
+
+        Assert.True(result.IsComplete);
+        Assert.NotNull(result.MessageEndMetadata);
+        Assert.True(result.MessageEndMetadata.HasRetrieverResourcesMetadata);
+        Assert.Empty(result.MessageEndMetadata.RetrieverResources);
+        Assert.Equal("17", result.MessageEndMetadata.Usage["total_tokens"]);
+        Assert.Contains(
+            "Dify message_end retriever_resources metadata was not an array and was ignored.",
+            result.Warnings);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("""{"provider_private_field":"ignored"}""")]
+    public void Parse_MessageEndIgnoresRetrieverResourcesWithoutRecognizedMappableFields(
+        string retrieverResourceJson)
+    {
+        var payload =
+            "data: {\"event\":\"message_end\",\"message_id\":\"msg-123\",\"conversation_id\":\"conv-456\"," +
+            $"\"metadata\":{{\"retriever_resources\":[{retrieverResourceJson}]}}}}";
+
+        var result = DifyAgentSseStreamParser.Parse(payload);
+
+        Assert.True(result.IsComplete);
+        Assert.NotNull(result.MessageEndMetadata);
+        Assert.True(result.MessageEndMetadata.HasRetrieverResourcesMetadata);
+        Assert.Equal(1, result.MessageEndMetadata.RetrieverResourceMetadataItemCount);
+        Assert.Empty(result.MessageEndMetadata.RetrieverResources);
+        Assert.Contains(
+            "Dify message_end retriever_resources contained an empty or unrecognized item that was ignored.",
+            result.Warnings);
     }
 
     [Fact]

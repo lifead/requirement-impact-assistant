@@ -107,7 +107,7 @@ public sealed class DifyExternalRagAdapterTests
         Assert.Empty(response.RetrievedContextItems);
         Assert.Contains(
             response.Warnings,
-            warning => warning.Contains("without retrieved context resources", StringComparison.OrdinalIgnoreCase));
+            warning => warning.Contains("did not include retriever_resources", StringComparison.OrdinalIgnoreCase));
 
         Assert.Equal("Dify", response.Metadata.ProviderName);
         Assert.Equal(nameof(DifyExternalRagAdapter), response.Metadata.AdapterName);
@@ -143,11 +143,226 @@ public sealed class DifyExternalRagAdapterTests
         Assert.Equal(0, diagnosticRoot.GetProperty("retrievedContextItemCount").GetInt32());
         Assert.Contains(
             diagnosticRoot.GetProperty("warnings").EnumerateArray(),
-            warning => warning.GetString()?.Contains("without retrieved context resources", StringComparison.OrdinalIgnoreCase) == true);
+            warning => warning.GetString()?.Contains("did not include retriever_resources", StringComparison.OrdinalIgnoreCase) == true);
         Assert.Empty(diagnosticRoot.GetProperty("errors").EnumerateArray());
         AssertSanitized(
             response,
             [TestApiKey, "https://dify.invalid", "Authorization", "Bearer"]);
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WhenMessageEndContainsRetrieverResources_MapsRetrievedContextItems()
+    {
+        var handler = new CapturingHandler(_ => CreateSseResponse(
+            HttpStatusCode.OK,
+            CreateCompleteSsePayload(
+                CreateStructuredAnswer("Resources mapped impact"),
+                "msg-resources",
+                "conv-resources",
+                totalTokens: 31,
+                retrieverResourcesJson: """
+                    [
+                      {
+                        "position": 1,
+                        "dataset_id": "dataset-1",
+                        "dataset_name": "Requirements knowledge base",
+                        "document_id": "document-1",
+                        "document_name": "Storage cell requirement",
+                        "segment_id": "segment-1",
+                        "score": 0.875,
+                        "content": "Storage cell codes must reject blank values."
+                      }
+                    ]
+                    """)));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
+        Assert.Equal(RetrievedContextState.Partial, response.RetrievedContextState);
+        var item = Assert.Single(response.RetrievedContextItems);
+        Assert.Equal("Storage cell requirement", item.SourceTitle);
+        Assert.Equal("document-1", item.SourceId);
+        Assert.Equal("dataset-1", item.ExternalReference);
+        Assert.Equal("segment-1", item.FragmentId);
+        Assert.Null(item.Text);
+        Assert.Equal("Storage cell codes must reject blank values.", item.Excerpt);
+        Assert.Equal(1, item.Rank);
+        Assert.Equal(0.875, item.Score);
+        Assert.Equal("Dify", item.ProviderName);
+        Assert.Equal(nameof(DifyExternalRagAdapter), item.AdapterName);
+        Assert.Equal(RetrievedContextItemCompleteness.ExcerptOnly, item.Completeness);
+        Assert.Contains("without full source text", item.WarningOrLimitationNote, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("partial retrieved context", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(
+            response.Warnings,
+            warning => warning.Contains("did not include retriever_resources", StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotNull(response.SanitizedDiagnosticSnapshot);
+        using var diagnosticDocument = JsonDocument.Parse(response.SanitizedDiagnosticSnapshot);
+        var diagnosticRoot = diagnosticDocument.RootElement;
+        Assert.Equal("Partial", diagnosticRoot.GetProperty("retrievedContextState").GetString());
+        Assert.Equal(1, diagnosticRoot.GetProperty("retrievedContextItemCount").GetInt32());
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WhenMessageEndContainsEmptyRetrieverResources_ReturnsUnavailableWithWarning()
+    {
+        var handler = new CapturingHandler(_ => CreateSseResponse(
+            HttpStatusCode.OK,
+            CreateCompleteSsePayload(
+                CreateStructuredAnswer("Empty resources impact"),
+                "msg-empty",
+                "conv-empty",
+                totalTokens: 19,
+                retrieverResourcesJson: "[]")));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
+        Assert.Equal(RetrievedContextState.Unavailable, response.RetrievedContextState);
+        Assert.Empty(response.RetrievedContextItems);
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("empty retriever_resources", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WhenRetrieverResourcesContainEmptyObject_IgnoresResourceAndReturnsUnavailable()
+    {
+        var handler = new CapturingHandler(_ => CreateSseResponse(
+            HttpStatusCode.OK,
+            CreateCompleteSsePayload(
+                CreateStructuredAnswer("Empty object resources impact"),
+                "msg-empty-object",
+                "conv-empty-object",
+                totalTokens: 20,
+                retrieverResourcesJson: """
+                    [
+                      {}
+                    ]
+                    """)));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
+        Assert.Equal(RetrievedContextState.Unavailable, response.RetrievedContextState);
+        Assert.Empty(response.RetrievedContextItems);
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("empty or unrecognized item", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("could not be mapped", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WhenRetrieverResourcesContainOnlyUnknownFields_IgnoresResourceAndReturnsUnavailable()
+    {
+        var handler = new CapturingHandler(_ => CreateSseResponse(
+            HttpStatusCode.OK,
+            CreateCompleteSsePayload(
+                CreateStructuredAnswer("Unknown resources impact"),
+                "msg-unknown",
+                "conv-unknown",
+                totalTokens: 22,
+                retrieverResourcesJson: """
+                    [
+                      {
+                        "provider_private_field": "ignored",
+                        "another_unknown_field": "ignored"
+                      }
+                    ]
+                    """)));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
+        Assert.Equal(RetrievedContextState.Unavailable, response.RetrievedContextState);
+        Assert.Empty(response.RetrievedContextItems);
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("empty or unrecognized item", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("could not be mapped", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WhenRetrieverResourcesContainSourceMetadataOnly_ReturnsMetadataOnlyState()
+    {
+        var handler = new CapturingHandler(_ => CreateSseResponse(
+            HttpStatusCode.OK,
+            CreateCompleteSsePayload(
+                CreateStructuredAnswer("Metadata-only resources impact"),
+                "msg-metadata-only",
+                "conv-metadata-only",
+                totalTokens: 24,
+                retrieverResourcesJson: """
+                    [
+                      {
+                        "dataset_id": "dataset-2",
+                        "document_id": "document-2",
+                        "document_name": "Architecture note",
+                        "segment_id": "segment-2",
+                        "score": 0.73
+                      }
+                    ]
+                    """)));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
+        Assert.Equal(RetrievedContextState.MetadataOnly, response.RetrievedContextState);
+        var item = Assert.Single(response.RetrievedContextItems);
+        Assert.Equal("Architecture note", item.SourceTitle);
+        Assert.Equal("document-2", item.SourceId);
+        Assert.Equal("dataset-2", item.ExternalReference);
+        Assert.Equal("segment-2", item.FragmentId);
+        Assert.Null(item.Text);
+        Assert.Null(item.Excerpt);
+        Assert.Equal(0.73, item.Score);
+        Assert.Equal(RetrievedContextItemCompleteness.MetadataOnly, item.Completeness);
+        Assert.Contains("without excerpt or full text", item.WarningOrLimitationNote, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("metadata without source text or excerpts", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task AnalyzeAsync_WhenRetrieverResourcesAreMalformed_ReturnsUnavailableWithWarnings()
+    {
+        var handler = new CapturingHandler(_ => CreateSseResponse(
+            HttpStatusCode.OK,
+            CreateCompleteSsePayload(
+                CreateStructuredAnswer("Malformed resources impact"),
+                "msg-malformed",
+                "conv-malformed",
+                totalTokens: 23,
+                retrieverResourcesJson: """
+                    [
+                      "not-an-object"
+                    ]
+                    """)));
+        var adapter = CreateAdapter(handler);
+
+        var response = await adapter.AnalyzeAsync(CreateRequest());
+
+        Assert.Equal(ExternalRagAdapterResponseStatus.CompletedWithWarnings, response.Status);
+        Assert.Equal(RetrievedContextState.Unavailable, response.RetrievedContextState);
+        Assert.Empty(response.RetrievedContextItems);
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("malformed item", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(
+            response.Warnings,
+            warning => warning.Contains("could not be mapped", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -245,7 +460,7 @@ public sealed class DifyExternalRagAdapterTests
             warning => warning.Contains("Dify provider warning was redacted", StringComparison.Ordinal));
         Assert.Contains(
             response.Warnings,
-            warning => warning.Contains("without retrieved context resources", StringComparison.OrdinalIgnoreCase));
+            warning => warning.Contains("did not include retriever_resources", StringComparison.OrdinalIgnoreCase));
         Assert.Equal("completedWithWarnings", response.Metadata.SanitizedProperties["adapterResponseStatus"]);
 
         Assert.NotNull(response.SanitizedDiagnosticSnapshot);
@@ -550,27 +765,35 @@ public sealed class DifyExternalRagAdapterTests
         string answer,
         string messageId,
         string conversationId,
-        int totalTokens)
+        int totalTokens,
+        string? retrieverResourcesJson = null)
     {
         var agentMessage = JsonSerializer.Serialize(new
         {
             @event = "agent_message",
             answer
         });
-        var messageEnd = JsonSerializer.Serialize(new
+        var metadata = new Dictionary<string, object?>
         {
-            @event = "message_end",
-            message_id = messageId,
-            conversation_id = conversationId,
-            metadata = new
+            ["usage"] = new Dictionary<string, object?>
             {
-                usage = new
-                {
-                    prompt_tokens = 12,
-                    completion_tokens = 5,
-                    total_tokens = totalTokens
-                }
+                ["prompt_tokens"] = 12,
+                ["completion_tokens"] = 5,
+                ["total_tokens"] = totalTokens
             }
+        };
+        if (retrieverResourcesJson is not null)
+        {
+            using var retrieverResourcesDocument = JsonDocument.Parse(retrieverResourcesJson);
+            metadata["retriever_resources"] = retrieverResourcesDocument.RootElement.Clone();
+        }
+
+        var messageEnd = JsonSerializer.Serialize(new Dictionary<string, object?>
+        {
+            ["event"] = "message_end",
+            ["message_id"] = messageId,
+            ["conversation_id"] = conversationId,
+            ["metadata"] = metadata
         });
 
         return string.Join(
@@ -579,6 +802,26 @@ public sealed class DifyExternalRagAdapterTests
             $"data: {messageEnd}",
             string.Empty);
     }
+
+    private static string CreateStructuredAnswer(string changeSummary) =>
+        JsonSerializer.Serialize(new
+        {
+            changeSummary,
+            affectedRequirements = Array.Empty<object>(),
+            affectedTasks = Array.Empty<object>(),
+            affectedProjectDecisions = Array.Empty<object>(),
+            affectedApiInterfacesDocumentsTests = Array.Empty<object>(),
+            affectedArchitecturalConstraints = Array.Empty<object>(),
+            affectedOrganizationalContextItems = Array.Empty<object>(),
+            contradictions = Array.Empty<object>(),
+            missingInformation = Array.Empty<object>(),
+            clarificationQuestions = Array.Empty<object>(),
+            risks = Array.Empty<object>(),
+            optionsForExpertReview = Array.Empty<object>(),
+            preliminaryAssessment = "Needs expert review",
+            usedSources = Array.Empty<object>(),
+            warnings = Array.Empty<string>()
+        });
 
     private static void AssertFailure(
         ExternalRagAdapterResponse response,

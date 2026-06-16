@@ -905,7 +905,7 @@ public sealed class AnalysisExecutionServiceTests
                     "workflow-from-options / service-test-profile",
                     saved.AiAnalysisResult.ModelName);
                 Assert.Contains(
-                    "without retrieved context resources",
+                    "did not include retriever_resources",
                     saved.AiAnalysisResult.ErrorMessage,
                     StringComparison.OrdinalIgnoreCase);
                 Assert.Contains(
@@ -937,7 +937,7 @@ public sealed class AnalysisExecutionServiceTests
                 Assert.True(metadata.ManualContextForwardedToExternalAiOrRag);
                 Assert.Contains(
                     metadata.Warnings,
-                    warning => warning.Contains("without retrieved context resources", StringComparison.OrdinalIgnoreCase));
+                    warning => warning.Contains("did not include retriever_resources", StringComparison.OrdinalIgnoreCase));
                 Assert.Contains(
                     metadata.Warnings,
                     warning => warning.Contains("Dify provider warning was redacted", StringComparison.Ordinal));
@@ -972,7 +972,7 @@ public sealed class AnalysisExecutionServiceTests
                 Assert.Equal(0, diagnosticRoot.GetProperty("retrievedContextItemCount").GetInt32());
                 Assert.Contains(
                     diagnosticRoot.GetProperty("warnings").EnumerateArray(),
-                    warning => warning.GetString()?.Contains("without retrieved context resources", StringComparison.OrdinalIgnoreCase) == true);
+                    warning => warning.GetString()?.Contains("did not include retriever_resources", StringComparison.OrdinalIgnoreCase) == true);
                 Assert.Contains(
                     diagnosticRoot.GetProperty("warnings").EnumerateArray(),
                     warning => warning.GetString()?.Contains("Dify provider warning was redacted", StringComparison.Ordinal) == true);
