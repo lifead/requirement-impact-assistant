@@ -91,6 +91,55 @@ public sealed class DifyExternalRagOptionsTests
     }
 
     [Fact]
+    public void ConfigurationBinding_UsesExternalRagDifySectionAndKnownKeys()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["ExternalRag:Dify:Enabled"] = "true",
+                ["ExternalRag:Dify:Endpoint"] = "http://localhost",
+                ["ExternalRag:Dify:WorkflowOrAppId"] = "agent-app-id-placeholder",
+                ["ExternalRag:Dify:ApiKey"] = NonSecretConfigurationValue,
+                ["ExternalRag:Dify:TimeoutSeconds"] = "60",
+                ["ExternalRag:Dify:ProfileName"] = "ria-mvp2-impact-analysis-agent"
+            })
+            .Build();
+
+        var options = configuration
+            .GetSection(DifyExternalRagOptions.SectionName)
+            .Get<DifyExternalRagOptions>();
+
+        Assert.Equal("ExternalRag:Dify", DifyExternalRagOptions.SectionName);
+        Assert.Null(configuration["Dify:Enabled"]);
+        Assert.NotNull(options);
+        Assert.True(options.Enabled);
+        Assert.Equal("http://localhost", options.Endpoint);
+        Assert.Equal("agent-app-id-placeholder", options.WorkflowOrAppId);
+        Assert.Equal(NonSecretConfigurationValue, options.ApiKey);
+        Assert.Equal(60, options.TimeoutSeconds);
+        Assert.Equal("ria-mvp2-impact-analysis-agent", options.ProfileName);
+    }
+
+    [Fact]
+    public void WorkflowOrAppId_IsConfigurationIdentifierAndDoesNotSatisfyApiKeyRequirement()
+    {
+        var options = new DifyExternalRagOptions
+        {
+            Enabled = true,
+            Endpoint = "http://localhost",
+            WorkflowOrAppId = "agent-app-id-placeholder",
+            ApiKey = null,
+            TimeoutSeconds = 60
+        };
+
+        var status = options.GetConfigurationStatus();
+
+        Assert.True(status.IsUnavailable);
+        Assert.DoesNotContain("Dify workflow or application identifier is not configured.", status.Reasons);
+        Assert.Contains("Dify API key is not configured.", status.Reasons);
+    }
+
+    [Fact]
     public void ApplicationAnalysisRegistration_ConfiguredDifySwitchesExternalAdapter()
     {
         var configuration = new ConfigurationBuilder()
@@ -149,6 +198,35 @@ public sealed class DifyExternalRagOptionsTests
     }
 
     [Fact]
+    public void ApplicationAnalysisRegistration_DisabledDifyConfigurationKeepsMockExternalAdapter()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["AiAnalysis:Provider"] = LlmProviderNames.Demo,
+                ["ExternalRag:Dify:Enabled"] = "false",
+                ["ExternalRag:Dify:Endpoint"] = new UriBuilder(Uri.UriSchemeHttps, "dify.invalid").Uri.ToString(),
+                ["ExternalRag:Dify:WorkflowOrAppId"] = "workflow-placeholder",
+                ["ExternalRag:Dify:ApiKey"] = NonSecretConfigurationValue
+            })
+            .Build();
+        var services = new ServiceCollection();
+
+        services.AddApplicationAnalysis(configuration);
+
+        using var serviceProvider = services.BuildServiceProvider();
+
+        var options = serviceProvider.GetRequiredService<IOptions<DifyExternalRagOptions>>().Value;
+        var status = options.GetConfigurationStatus();
+        var externalAdapter = serviceProvider.GetRequiredService<IExternalRagAdapter>();
+
+        Assert.False(options.Enabled);
+        Assert.False(options.IsConfigured);
+        Assert.False(status.IsUnavailable);
+        Assert.IsType<MockExternalRagAdapter>(externalAdapter);
+    }
+
+    [Fact]
     public void ApplicationAnalysisRegistration_MissingDifySectionLeavesOptionsDisabled()
     {
         var configuration = new ConfigurationBuilder()
@@ -165,9 +243,11 @@ public sealed class DifyExternalRagOptionsTests
 
         var options = serviceProvider.GetRequiredService<IOptions<DifyExternalRagOptions>>().Value;
         var status = options.GetConfigurationStatus();
+        var externalAdapter = serviceProvider.GetRequiredService<IExternalRagAdapter>();
 
         Assert.False(options.Enabled);
         Assert.False(options.IsConfigured);
         Assert.False(status.IsUnavailable);
+        Assert.IsType<MockExternalRagAdapter>(externalAdapter);
     }
 }

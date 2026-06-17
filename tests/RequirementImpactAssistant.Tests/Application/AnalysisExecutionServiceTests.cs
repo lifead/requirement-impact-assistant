@@ -830,61 +830,170 @@ public sealed class AnalysisExecutionServiceTests
     {
         const string testDifyApiKey = "test-service-dify-api-key";
         var databasePath = CreateDatabasePath();
-        var handler = new CapturingHttpMessageHandler(_ => CreateJsonResponse(HttpStatusCode.OK, """
+        var handler = new CapturingHttpMessageHandler(_ => CreateSseResponse(
+            HttpStatusCode.OK,
+            CreateStructuredDifyAgentSsePayload(
+                changeSummary: "Gateway migration",
+                preliminaryAssessment: "Requires expert review",
+                messageId: "msg-service-1",
+                conversationId: "conv-service-1",
+                totalTokens: 21,
+                warnings:
+                [
+                    "Provider warning with auth=auth-assignment auth: auth-colon key=synthetic-key key: synthetic-key-colon dify.invalid/private"
+                ])));
+
+        try
+        {
+            var analysis = CreateAnalysis("Gateway migration");
+            analysis.ContextFragments.Add(CreateContextFragment(analysis.Id));
+            var services = new ServiceCollection();
+            services.AddDbContext<ApplicationDbContext>(options =>
+                options.UseSqlite($"Data Source={databasePath}"));
+            services.AddApplicationAnalysis(CreateDifyAnalysisConfiguration(testDifyApiKey));
+            services.AddHttpClient<DifyExternalRagAdapter>()
+                .ConfigurePrimaryHttpMessageHandler(() => handler);
+
+            using var serviceProvider = services.BuildServiceProvider();
+
+            using (var scope = serviceProvider.CreateScope())
             {
-              "workflow_run_id": "run-service-1",
-              "task_id": "task-service-1",
-              "data": {
-                "workflow_id": "workflow-from-response",
-                "status": "succeeded",
-                "outputs": {
-                  "metadata": {
-                    "model": "dify-service-model",
-                    "response_shape": "structured-impact-map"
-                  },
-                  "impact_map": {
-                    "change_summary": {
-                      "title": "Gateway migration",
-                      "description": "Authentication gateway change affects integration boundaries.",
-                      "severity": "High"
-                    },
-                    "affected_requirements": [
-                      {
-                        "title": "Review gateway requirement",
-                        "description": "Confirm whether the migration changes the requirement boundary.",
-                        "severity": "Medium"
-                      }
-                    ],
-                    "risks": [
-                      {
-                        "title": "Downstream integration regression",
-                        "description": "Dependent clients may need additional regression checks.",
-                        "severity": "High"
-                      }
-                    ],
-                    "preliminary_assessment": {
-                      "title": "Requires expert review",
-                      "description": "The response is preliminary analytical material only.",
-                      "severity": "Medium"
-                    }
-                  },
-                  "retrieved_context": [
-                    {
-                      "source_title": "Integration requirements catalogue",
-                      "source_id": "requirements",
-                      "external_reference": "REQ-42",
-                      "fragment_id": "fragment-42",
-                      "text": "Gateway changes that affect integration boundaries require expert review.",
-                      "excerpt": "Gateway changes require expert review.",
-                      "url_or_reference": "kb://requirements/REQ-42",
-                      "rank": 1,
-                      "score": 0.91
-                    }
-                  ],
-                  "warnings": []
-                }
-              }
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
             }
+
+            using (var scope = serviceProvider.CreateScope())
+            {
+                var service = scope.ServiceProvider.GetRequiredService<IAnalysisExecutionService>();
+
+                var outcome = await service.RunAsync(analysis.Id, AnalysisMode.ExternalRag);
+
+                Assert.True(outcome.Succeeded);
+                Assert.Equal(AiAnalysisResultStatus.CompletedWithWarnings, outcome.ResultStatus);
+            }
+
+            Assert.Equal(1, handler.CallCount);
+            Assert.NotNull(handler.LastRequest);
+            Assert.Equal(HttpMethod.Post, handler.LastRequest.Method);
+            Assert.Equal("https://dify.invalid/v1/chat-messages", handler.LastRequest.RequestUri?.ToString());
+            Assert.Equal("Bearer", handler.LastRequest.Headers.Authorization?.Scheme);
+            Assert.False(string.IsNullOrWhiteSpace(handler.LastRequest.Headers.Authorization?.Parameter));
+            Assert.NotNull(handler.LastRequestBody);
+            Assert.Contains("Gateway migration", handler.LastRequestBody, StringComparison.Ordinal);
+            Assert.Contains("streaming", handler.LastRequestBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("Keep gateway contract backward compatible.", handler.LastRequestBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("blocking", handler.LastRequestBody, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(testDifyApiKey, handler.LastRequestBody, StringComparison.Ordinal);
+
+            using (var scope = serviceProvider.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+                var saved = await dbContext.Analyses
+                    .AsSplitQuery()
+                    .Include(candidate => candidate.AiAnalysisResult)
+                    .ThenInclude(result => result!.Metadata.RetrievedContextItems)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(AnalysisStatus.NeedsExpertEvaluation, saved.Status);
+                Assert.NotNull(saved.AiAnalysisResult);
+                Assert.Equal(AiAnalysisResultStatus.CompletedWithWarnings, saved.AiAnalysisResult.Status);
+                Assert.Equal(nameof(ExternalRagAnalysisEngine), saved.AiAnalysisResult.EngineName);
+                Assert.Equal("Dify", saved.AiAnalysisResult.ProviderName);
+                Assert.Equal(
+                    "workflow-from-options / service-test-profile",
+                    saved.AiAnalysisResult.ModelName);
+                Assert.Contains(
+                    "did not include retriever_resources",
+                    saved.AiAnalysisResult.ErrorMessage,
+                    StringComparison.OrdinalIgnoreCase);
+                Assert.Contains(
+                    "Dify provider warning was redacted",
+                    saved.AiAnalysisResult.ErrorMessage,
+                    StringComparison.Ordinal);
+                Assert.DoesNotContain(testDifyApiKey, saved.AiAnalysisResult.ErrorMessage, StringComparison.Ordinal);
+                Assert.DoesNotContain("auth-assignment", saved.AiAnalysisResult.ErrorMessage, StringComparison.Ordinal);
+                Assert.DoesNotContain("auth-colon", saved.AiAnalysisResult.ErrorMessage, StringComparison.Ordinal);
+                Assert.DoesNotContain("synthetic-key", saved.AiAnalysisResult.ErrorMessage, StringComparison.Ordinal);
+                Assert.DoesNotContain("synthetic-key-colon", saved.AiAnalysisResult.ErrorMessage, StringComparison.Ordinal);
+                Assert.DoesNotContain("dify.invalid/private", saved.AiAnalysisResult.ErrorMessage, StringComparison.Ordinal);
+                Assert.NotNull(saved.AiAnalysisResult.ImpactMap);
+                Assert.Equal(
+                    "Gateway migration",
+                    saved.AiAnalysisResult.ImpactMap.ChangeSummary.Title);
+                Assert.Empty(saved.AiAnalysisResult.ImpactMap.AffectedRequirements);
+                Assert.Empty(saved.AiAnalysisResult.ImpactMap.Risks);
+
+                var metadata = saved.AiAnalysisResult.Metadata;
+                Assert.Equal(AnalysisMode.ExternalRag, metadata.AnalysisMode);
+                Assert.Equal(nameof(ExternalRagAnalysisEngine), metadata.EngineName);
+                Assert.Equal("Dify", metadata.ProviderName);
+                Assert.Equal(nameof(DifyExternalRagAdapter), metadata.AdapterName);
+                Assert.Equal(
+                    "workflow-from-options / service-test-profile",
+                    metadata.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
+                Assert.True(metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Contains(
+                    metadata.Warnings,
+                    warning => warning.Contains("did not include retriever_resources", StringComparison.OrdinalIgnoreCase));
+                Assert.Contains(
+                    metadata.Warnings,
+                    warning => warning.Contains("Dify provider warning was redacted", StringComparison.Ordinal));
+                Assert.Empty(metadata.RetrievedContextItems);
+
+                Assert.DoesNotContain(testDifyApiKey, saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("https://dify.invalid", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("Authorization", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("Bearer", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("auth-assignment", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("auth-colon", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("synthetic-key", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("synthetic-key-colon", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("dify.invalid/private", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+
+                using var diagnosticDocument = JsonDocument.Parse(saved.AiAnalysisResult.RawResponse);
+                var diagnosticRoot = diagnosticDocument.RootElement;
+                Assert.Equal("completedWithWarnings", diagnosticRoot.GetProperty("status").GetString());
+                Assert.Equal("Dify", diagnosticRoot.GetProperty("provider").GetString());
+                Assert.Equal(nameof(DifyExternalRagAdapter), diagnosticRoot.GetProperty("adapter").GetString());
+                Assert.Equal("https", diagnosticRoot.GetProperty("endpoint").GetProperty("scheme").GetString());
+                Assert.Equal("dify.invalid", diagnosticRoot.GetProperty("endpoint").GetProperty("host").GetString());
+                Assert.Equal("/v1/chat-messages", diagnosticRoot.GetProperty("endpoint").GetProperty("path").GetString());
+                Assert.Equal("workflow-from-options", diagnosticRoot.GetProperty("workflow").GetString());
+                Assert.Equal("service-test-profile", diagnosticRoot.GetProperty("profile").GetString());
+                Assert.Equal("stream-complete", diagnosticRoot.GetProperty("providerStatus").GetString());
+                Assert.Equal("msg-service-1", diagnosticRoot.GetProperty("messageId").GetString());
+                Assert.Equal("conv-service-1", diagnosticRoot.GetProperty("conversationId").GetString());
+                Assert.Equal("21", diagnosticRoot.GetProperty("usage").GetProperty("total_tokens").GetString());
+                Assert.Equal("dify-agent-answer-json", diagnosticRoot.GetProperty("responseShape").GetString());
+                Assert.Equal("Unavailable", diagnosticRoot.GetProperty("retrievedContextState").GetString());
+                Assert.Equal(0, diagnosticRoot.GetProperty("retrievedContextItemCount").GetInt32());
+                Assert.Contains(
+                    diagnosticRoot.GetProperty("warnings").EnumerateArray(),
+                    warning => warning.GetString()?.Contains("did not include retriever_resources", StringComparison.OrdinalIgnoreCase) == true);
+                Assert.Contains(
+                    diagnosticRoot.GetProperty("warnings").EnumerateArray(),
+                    warning => warning.GetString()?.Contains("Dify provider warning was redacted", StringComparison.Ordinal) == true);
+                Assert.Empty(diagnosticRoot.GetProperty("errors").EnumerateArray());
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task RunAsync_ExternalRagModeThroughConfiguredDifyAdapterPersistsOnlySanitizedRawFallback()
+    {
+        const string testDifyApiKey = "test-service-dify-api-key";
+        var databasePath = CreateDatabasePath();
+        var handler = new CapturingHttpMessageHandler(_ => CreateSseResponse(HttpStatusCode.OK, """
+            data: {"event":"agent_message","answer":"Unable to produce JSON. apiKey=synthetic-key Authorization: Bearer synthetic-token auth=auth-assignment auth: auth-colon key=generic-key-assignment key: generic-key-colon session=session-assignment password=password-assignment password: password-colon dify.invalid/private"}
+            data: {"event":"message_end","message_id":"msg-service-raw","conversation_id":"conv-service-raw","metadata":{"usage":{"total_tokens":13}}}
+
             """));
 
         try
@@ -915,19 +1024,8 @@ public sealed class AnalysisExecutionServiceTests
                 var outcome = await service.RunAsync(analysis.Id, AnalysisMode.ExternalRag);
 
                 Assert.True(outcome.Succeeded);
-                Assert.Equal(AiAnalysisResultStatus.Completed, outcome.ResultStatus);
+                Assert.Equal(AiAnalysisResultStatus.CompletedWithWarnings, outcome.ResultStatus);
             }
-
-            Assert.Equal(1, handler.CallCount);
-            Assert.NotNull(handler.LastRequest);
-            Assert.Equal(HttpMethod.Post, handler.LastRequest.Method);
-            Assert.Equal("https://dify.invalid/workflows/run", handler.LastRequest.RequestUri?.ToString());
-            Assert.Equal("Bearer", handler.LastRequest.Headers.Authorization?.Scheme);
-            Assert.Equal(testDifyApiKey, handler.LastRequest.Headers.Authorization?.Parameter);
-            Assert.NotNull(handler.LastRequestBody);
-            Assert.Contains("Gateway migration", handler.LastRequestBody, StringComparison.Ordinal);
-            Assert.Contains("Keep gateway contract backward compatible.", handler.LastRequestBody, StringComparison.Ordinal);
-            Assert.DoesNotContain(testDifyApiKey, handler.LastRequestBody, StringComparison.Ordinal);
 
             using (var scope = serviceProvider.CreateScope())
             {
@@ -940,58 +1038,51 @@ public sealed class AnalysisExecutionServiceTests
 
                 Assert.Equal(AnalysisStatus.NeedsExpertEvaluation, saved.Status);
                 Assert.NotNull(saved.AiAnalysisResult);
-                Assert.Equal(AiAnalysisResultStatus.Completed, saved.AiAnalysisResult.Status);
-                Assert.Equal(nameof(ExternalRagAnalysisEngine), saved.AiAnalysisResult.EngineName);
-                Assert.Equal("Dify", saved.AiAnalysisResult.ProviderName);
-                Assert.Equal(
-                    "dify-service-model / workflow-from-response / service-test-profile",
-                    saved.AiAnalysisResult.ModelName);
-                Assert.Empty(saved.AiAnalysisResult.ErrorMessage);
+                Assert.Equal(AiAnalysisResultStatus.CompletedWithWarnings, saved.AiAnalysisResult.Status);
                 Assert.NotNull(saved.AiAnalysisResult.ImpactMap);
-                Assert.Equal("Gateway migration", saved.AiAnalysisResult.ImpactMap.ChangeSummary.Title);
-                Assert.Single(saved.AiAnalysisResult.ImpactMap.AffectedRequirements);
-                Assert.Single(saved.AiAnalysisResult.ImpactMap.Risks);
-
-                var metadata = saved.AiAnalysisResult.Metadata;
-                Assert.Equal(AnalysisMode.ExternalRag, metadata.AnalysisMode);
-                Assert.Equal(nameof(ExternalRagAnalysisEngine), metadata.EngineName);
-                Assert.Equal("Dify", metadata.ProviderName);
-                Assert.Equal(nameof(DifyExternalRagAdapter), metadata.AdapterName);
                 Assert.Equal(
-                    "dify-service-model / workflow-from-response / service-test-profile",
-                    metadata.ModelWorkflowProfileName);
-                Assert.Equal(RetrievedContextState.Available, metadata.RetrievedContextState);
-                Assert.True(metadata.ManualContextForwardedToExternalAiOrRag);
-                Assert.Empty(metadata.Warnings);
+                    "External AI/RAG raw answer fallback retained",
+                    saved.AiAnalysisResult.ImpactMap.ChangeSummary.Title);
 
-                var savedItem = Assert.Single(metadata.RetrievedContextItems);
-                Assert.Equal("Integration requirements catalogue", savedItem.SourceTitle);
-                Assert.Equal("requirements", savedItem.SourceId);
-                Assert.Equal("REQ-42", savedItem.ExternalReference);
-                Assert.Equal("fragment-42", savedItem.FragmentId);
-                Assert.Contains("integration boundaries", savedItem.Text);
-                Assert.Equal("Gateway changes require expert review.", savedItem.Excerpt);
-                Assert.Equal("kb://requirements/REQ-42", savedItem.UrlOrReference);
-                Assert.Equal(1, savedItem.Rank);
-                Assert.Equal(0.91, savedItem.Score);
-                Assert.Equal("Dify", savedItem.ProviderName);
-                Assert.Equal(nameof(DifyExternalRagAdapter), savedItem.AdapterName);
-                Assert.Equal(RetrievedContextItemCompleteness.FullText, savedItem.Completeness);
+                var description = saved.AiAnalysisResult.ImpactMap.ChangeSummary.Description;
+                Assert.Contains("[REDACTED]", description, StringComparison.Ordinal);
+                Assert.Contains("[REDACTED_URL]", description, StringComparison.Ordinal);
+                Assert.DoesNotContain(testDifyApiKey, description, StringComparison.Ordinal);
+                Assert.DoesNotContain("synthetic-key", description, StringComparison.Ordinal);
+                Assert.DoesNotContain("synthetic-token", description, StringComparison.Ordinal);
+                Assert.DoesNotContain("auth-assignment", description, StringComparison.Ordinal);
+                Assert.DoesNotContain("auth-colon", description, StringComparison.Ordinal);
+                Assert.DoesNotContain("generic-key-assignment", description, StringComparison.Ordinal);
+                Assert.DoesNotContain("generic-key-colon", description, StringComparison.Ordinal);
+                Assert.DoesNotContain("session-assignment", description, StringComparison.Ordinal);
+                Assert.DoesNotContain("password-assignment", description, StringComparison.Ordinal);
+                Assert.DoesNotContain("password-colon", description, StringComparison.Ordinal);
+                Assert.DoesNotContain("dify.invalid/private", description, StringComparison.Ordinal);
+                Assert.DoesNotContain("Authorization", description, StringComparison.Ordinal);
+                Assert.DoesNotContain("Bearer", description, StringComparison.Ordinal);
 
                 Assert.DoesNotContain(testDifyApiKey, saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
-                Assert.DoesNotContain("https://dify.invalid", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("synthetic-key", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("synthetic-token", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("auth-assignment", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("auth-colon", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("generic-key-assignment", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("generic-key-colon", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("session-assignment", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("password-assignment", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("password-colon", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
+                Assert.DoesNotContain("dify.invalid/private", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
                 Assert.DoesNotContain("Authorization", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
                 Assert.DoesNotContain("Bearer", saved.AiAnalysisResult.RawResponse, StringComparison.Ordinal);
 
-                using var diagnosticDocument = JsonDocument.Parse(saved.AiAnalysisResult.RawResponse);
-                var diagnosticRoot = diagnosticDocument.RootElement;
-                Assert.Equal("completed", diagnosticRoot.GetProperty("status").GetString());
-                Assert.Equal("Dify", diagnosticRoot.GetProperty("provider").GetString());
-                Assert.Equal(nameof(DifyExternalRagAdapter), diagnosticRoot.GetProperty("adapter").GetString());
-                Assert.Equal("workflow-from-response", diagnosticRoot.GetProperty("workflow").GetString());
-                Assert.Equal("service-test-profile", diagnosticRoot.GetProperty("profile").GetString());
-                Assert.Equal("Available", diagnosticRoot.GetProperty("retrievedContextState").GetString());
-                Assert.Equal(1, diagnosticRoot.GetProperty("retrievedContextItemCount").GetInt32());
+                var metadata = saved.AiAnalysisResult.Metadata;
+                Assert.Equal(AnalysisMode.ExternalRag, metadata.AnalysisMode);
+                Assert.Equal("Dify", metadata.ProviderName);
+                Assert.Equal(nameof(DifyExternalRagAdapter), metadata.AdapterName);
+                Assert.NotEmpty(metadata.Warnings);
+                Assert.Contains(
+                    metadata.Warnings,
+                    warning => warning.Contains("sanitized raw answer fallback", StringComparison.OrdinalIgnoreCase));
             }
         }
         finally
@@ -1975,11 +2066,63 @@ public sealed class AnalysisExecutionServiceTests
             })
             .Build();
 
-    private static HttpResponseMessage CreateJsonResponse(HttpStatusCode statusCode, string content) =>
+    private static HttpResponseMessage CreateSseResponse(HttpStatusCode statusCode, string content) =>
         new(statusCode)
         {
-            Content = new StringContent(content, Encoding.UTF8, "application/json")
+            Content = new StringContent(content, Encoding.UTF8, "text/event-stream")
         };
+
+    private static string CreateStructuredDifyAgentSsePayload(
+        string changeSummary,
+        string preliminaryAssessment,
+        string messageId,
+        string conversationId,
+        int totalTokens,
+        IReadOnlyList<string>? warnings = null)
+    {
+        var answer = JsonSerializer.Serialize(new
+        {
+            changeSummary,
+            affectedRequirements = Array.Empty<object>(),
+            affectedTasks = Array.Empty<object>(),
+            affectedProjectDecisions = Array.Empty<object>(),
+            affectedApiInterfacesDocumentsTests = Array.Empty<object>(),
+            affectedArchitecturalConstraints = Array.Empty<object>(),
+            affectedOrganizationalContextItems = Array.Empty<object>(),
+            contradictions = Array.Empty<object>(),
+            missingInformation = Array.Empty<object>(),
+            clarificationQuestions = Array.Empty<object>(),
+            risks = Array.Empty<object>(),
+            optionsForExpertReview = Array.Empty<object>(),
+            preliminaryAssessment,
+            usedSources = Array.Empty<object>(),
+            warnings = warnings ?? Array.Empty<string>()
+        });
+        var agentMessage = JsonSerializer.Serialize(new
+        {
+            @event = "agent_message",
+            answer
+        });
+        var messageEnd = JsonSerializer.Serialize(new
+        {
+            @event = "message_end",
+            message_id = messageId,
+            conversation_id = conversationId,
+            metadata = new
+            {
+                usage = new
+                {
+                    total_tokens = totalTokens
+                }
+            }
+        });
+
+        return string.Join(
+            Environment.NewLine,
+            $"data: {agentMessage}",
+            $"data: {messageEnd}",
+            string.Empty);
+    }
 
     private static void DeleteDatabase(string databasePath)
     {
