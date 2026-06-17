@@ -286,54 +286,117 @@
             @if (aiResult.ImpactMap is null)
             {
                 <div class="alert alert-warning" role="status">
-                    Для этого результата не сохранена структурированная карта влияния. Проверьте диагностику и исходный ответ ниже.
+                    Для этого результата не сохранена структурированная карта влияния. Проверьте предупреждения, ограничения, диагностику и исходный ответ ниже.
                 </div>
             }
             else
             {
-                <div class="d-grid gap-4">
-                    @foreach (var impactSection in aiResult.ImpactSections)
-                    {
-                        <section>
-                            <h3 class="h5 mb-3">@impactSection.Title</h3>
+                <section id="impact-map" class="mb-4" aria-labelledby="impact-map-heading">
+                    <div class="border rounded p-3 mb-3 bg-light">
+                        <div class="d-flex align-items-start justify-content-between gap-3 mb-2">
+                            <div>
+                                <h3 id="impact-map-heading" class="h5 mb-1">Структурированная карта влияния</h3>
+                                <p class="text-muted mb-0">
+                                    Карта влияния является preliminary analytical material для экспертного рассмотрения человеком и не является экспертным заключением или управленческим решением.
+                                </p>
+                            </div>
+                            <span class="badge text-bg-secondary">Preliminary material</span>
+                        </div>
+                    </div>
 
-                            @if (impactSection.Items.Count == 0)
-                            {
-                                <p class="text-muted mb-0">Нет элементов.</p>
-                            }
-                            else
-                            {
-                                <div class="table-responsive">
-                                    <table class="table table-sm align-middle">
-                                        <thead>
-                                            <tr>
-                                                <th scope="col">Идентификатор</th>
-                                                <th scope="col">Тип</th>
-                                                <th scope="col">Критичность</th>
-                                                <th scope="col">Название</th>
-                                                <th scope="col">Описание</th>
-                                                <th scope="col">Примечания</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            @foreach (var item in impactSection.Items)
-                                            {
-                                                <tr>
-                                                    <td><code>@item.Id</code></td>
-                                                    <td>@AnalysisUiText.ImpactMapItemTypeLabel(item.ItemType)</td>
-                                                    <td>@AnalysisUiText.ImpactSeverityLabel(item.Severity)</td>
-                                                    <td>@item.Title</td>
-                                                    <td class="text-break">@item.Description</td>
-                                                    <td class="text-break">@item.Notes</td>
-                                                </tr>
-                                            }
-                                        </tbody>
-                                    </table>
+                    <div class="row g-3 mb-3" aria-label="Сводка карты влияния">
+                        @foreach (var summary in aiResult.ImpactMapSummaryCards)
+                        {
+                            <div class="col-md-4">
+                                <article class="h-100 border rounded p-3">
+                                    <div class="d-flex align-items-start justify-content-between gap-3 mb-2">
+                                        <h4 class="h6 mb-0">@summary.Title</h4>
+                                        <span class="badge text-bg-light text-dark">@summary.CountLabel</span>
+                                    </div>
+                                    <p class="text-muted small mb-0">@summary.Description</p>
+                                </article>
+                            </div>
+                        }
+                    </div>
+
+                    <nav class="d-flex flex-wrap gap-2 mb-4" aria-label="Навигация по карте влияния">
+                        @foreach (var impactGroup in aiResult.ImpactSectionGroups)
+                        {
+                            <a class="btn btn-outline-secondary btn-sm" href="#@impactGroup.Anchor">
+                                @impactGroup.Title
+                                <span class="text-muted">(@impactGroup.ItemCount)</span>
+                            </a>
+                        }
+                    </nav>
+
+                    <div class="d-grid gap-4">
+                        @foreach (var impactGroup in aiResult.ImpactSectionGroups)
+                        {
+                            <section id="@impactGroup.Anchor" aria-labelledby="@($"{impactGroup.Anchor}-heading")">
+                                <div class="mb-3">
+                                    <h4 id="@($"{impactGroup.Anchor}-heading")" class="h5 mb-1">@impactGroup.Title</h4>
+                                    <p class="text-muted mb-0">@impactGroup.Summary</p>
                                 </div>
-                            }
-                        </section>
-                    }
-                </div>
+
+                                <div class="d-grid gap-3">
+                                    @foreach (var impactSection in impactGroup.Sections)
+                                    {
+                                        <article id="@impactSection.Anchor" class="border rounded p-3">
+                                            <div class="d-flex align-items-start justify-content-between gap-3 mb-2">
+                                                <div>
+                                                    <h5 class="h6 mb-1">@impactSection.Title</h5>
+                                                    <p class="text-muted small mb-0">@impactSection.Summary</p>
+                                                </div>
+                                                <span class="badge text-bg-light text-dark">@impactSection.CountLabel</span>
+                                            </div>
+
+                                            @if (impactSection.Items.Count == 0)
+                                            {
+                                                <p class="text-muted mb-0">@impactSection.EmptyState</p>
+                                            }
+                                            else
+                                            {
+                                                <div class="row g-3">
+                                                    @foreach (var item in impactSection.Items)
+                                                    {
+                                                        <div class="col-xl-6">
+                                                            <article class="h-100 border rounded p-3">
+                                                                <div class="d-flex align-items-start justify-content-between gap-3 mb-2">
+                                                                    <div>
+                                                                        <div class="small text-muted mb-1">
+                                                                            <code>@item.Id</code>
+                                                                            <span class="ms-2">@AnalysisUiText.ImpactMapItemTypeLabel(item.ItemType)</span>
+                                                                        </div>
+                                                                        <h6 class="mb-0">@(string.IsNullOrWhiteSpace(item.Title) ? "Без названия" : item.Title)</h6>
+                                                                    </div>
+                                                                    <span class="badge text-bg-secondary">@AnalysisUiText.ImpactSeverityLabel(item.Severity)</span>
+                                                                </div>
+
+                                                                @if (!string.IsNullOrWhiteSpace(item.Description))
+                                                                {
+                                                                    <p class="mb-2 text-break">@item.Description</p>
+                                                                }
+                                                                else
+                                                                {
+                                                                    <p class="text-muted mb-2">Описание не заполнено в предварительной карте.</p>
+                                                                }
+
+                                                                @if (!string.IsNullOrWhiteSpace(item.Notes))
+                                                                {
+                                                                    <p class="text-muted small mb-0 text-break">Примечания: @item.Notes</p>
+                                                                }
+                                                            </article>
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                        </article>
+                                    }
+                                </div>
+                            </section>
+                        }
+                    </div>
+                </section>
             }
 
             @if (!string.IsNullOrWhiteSpace(aiResult.ErrorMessage))

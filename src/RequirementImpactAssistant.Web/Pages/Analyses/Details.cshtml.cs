@@ -442,24 +442,149 @@ public sealed class DetailsModel(
         AiAnalysisResultMetadataDetails Metadata)
     {
         public IReadOnlyList<ImpactMapSectionDetails> ImpactSections =>
+            ImpactSectionGroups
+                .SelectMany(group => group.Sections)
+                .ToList();
+
+        public IReadOnlyList<ImpactMapSectionGroupDetails> ImpactSectionGroups =>
             ImpactMap is null
                 ? []
                 :
                 [
-                    new("Сводка изменения", [ImpactMap.ChangeSummary]),
-                    new("Затронутые требования", ImpactMap.AffectedRequirements),
-                    new("Затронутые задачи", ImpactMap.AffectedTasks),
-                    new("Затронутые проектные решения", ImpactMap.AffectedProjectDecisions),
-                    new("Затронутые API, интерфейсы, документы и тесты", ImpactMap.AffectedApiInterfacesDocumentsTests),
-                    new("Затронутые архитектурные ограничения", ImpactMap.AffectedArchitecturalConstraints),
-                    new("Затронутый организационный контекст", ImpactMap.AffectedOrganizationalContextItems),
-                    new("Противоречия", ImpactMap.Contradictions),
-                    new("Недостающая информация", ImpactMap.MissingInformation),
-                    new("Вопросы для уточнения", ImpactMap.ClarificationQuestions),
-                    new("Риски", ImpactMap.Risks),
-                    new("Варианты для экспертного рассмотрения", ImpactMap.OptionsForExpertReview),
-                    new("Предварительная оценка", [ImpactMap.PreliminaryAssessment])
+                    new(
+                        "impact-map-orientation",
+                        "Ориентиры анализа",
+                        "Сводные элементы помогают быстро понять предмет изменения и предварительную оценку.",
+                        [
+                            CreateImpactSection(
+                                ImpactMapItemType.ChangeSummary,
+                                "Сводка изменения",
+                                "Краткое описание рассматриваемого изменения.",
+                                "Сводка изменения не заполнена в сохраненной карте влияния.",
+                                [ImpactMap.ChangeSummary]),
+                            CreateImpactSection(
+                                ImpactMapItemType.PreliminaryAssessment,
+                                "Предварительная оценка",
+                                "Предварительная оценка для дальнейшего экспертного рассмотрения.",
+                                "Предварительная оценка не заполнена в сохраненной карте влияния.",
+                                [ImpactMap.PreliminaryAssessment])
+                        ]),
+                    new(
+                        "impact-map-affected-elements",
+                        "Затронутые элементы",
+                        "Требования, задачи, решения, API, ограничения и организационный контекст, которые стоит проверить.",
+                        [
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedRequirement,
+                                "Требования",
+                                "Требования, которые могут потребовать изменения или проверки.",
+                                "Затронутые требования не указаны в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedRequirements),
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedTask,
+                                "Задачи",
+                                "Задачи и работы, которые могут измениться из-за запроса.",
+                                "Затронутые задачи не указаны в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedTasks),
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedProjectDecision,
+                                "Проектные решения",
+                                "Ранее принятые решения, которые стоит сверить с изменением.",
+                                "Затронутые проектные решения не указаны в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedProjectDecisions),
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedApiInterfaceDocumentTest,
+                                "API, интерфейсы, документы и тесты",
+                                "Артефакты реализации и проверки, которые могут потребовать обновления.",
+                                "Затронутые API, интерфейсы, документы и тесты не указаны в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedApiInterfacesDocumentsTests),
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedArchitecturalConstraint,
+                                "Архитектурные ограничения",
+                                "Архитектурные ограничения, которые могут сузить или изменить варианты реализации.",
+                                "Затронутые архитектурные ограничения не указаны в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedArchitecturalConstraints),
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedOrganizationalContextItem,
+                                "Организационный контекст",
+                                "Роли, процессы или организационные условия, которые стоит учесть.",
+                                "Затронутый организационный контекст не указан в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedOrganizationalContextItems)
+                        ]),
+                    new(
+                        "impact-map-risks-questions",
+                        "Риски, вопросы и ограничения",
+                        "Неопределенности, противоречия, риски и варианты, которые требуют человеческого рассмотрения.",
+                        [
+                            CreateImpactSection(
+                                ImpactMapItemType.Contradiction,
+                                "Противоречия",
+                                "Потенциальные конфликты с требованиями, решениями или ограничениями.",
+                                "Противоречия не указаны в предварительной карте; это не подтверждает их отсутствие.",
+                                ImpactMap.Contradictions),
+                            CreateImpactSection(
+                                ImpactMapItemType.MissingInformation,
+                                "Недостающая информация",
+                                "Данные, которых не хватает для уверенного анализа.",
+                                "Недостающая информация не указана в предварительной карте; это не подтверждает полноту контекста.",
+                                ImpactMap.MissingInformation),
+                            CreateImpactSection(
+                                ImpactMapItemType.ClarificationQuestion,
+                                "Вопросы для уточнения",
+                                "Вопросы, которые нужно адресовать до управленческого рассмотрения.",
+                                "Вопросы для уточнения не указаны в предварительной карте; это не подтверждает, что уточнения не нужны.",
+                                ImpactMap.ClarificationQuestions),
+                            CreateImpactSection(
+                                ImpactMapItemType.Risk,
+                                "Риски",
+                                "Риски, которые стоит проверить и оценить эксперту.",
+                                "Риски не указаны в предварительной карте; это не подтверждает их отсутствие.",
+                                ImpactMap.Risks),
+                            CreateImpactSection(
+                                ImpactMapItemType.OptionForExpertReview,
+                                "Варианты для экспертного рассмотрения",
+                                "Возможные варианты дальнейшего рассмотрения человеком.",
+                                "Варианты для экспертного рассмотрения не указаны в предварительной карте; эксперт может сформулировать их отдельно.",
+                                ImpactMap.OptionsForExpertReview)
+                        ])
                 ];
+
+        public IReadOnlyList<ImpactMapSummaryDetails> ImpactMapSummaryCards =>
+            ImpactSectionGroups
+                .Select(group => new ImpactMapSummaryDetails(
+                    group.Title,
+                    FormatItemCount(group.ItemCount),
+                    group.Summary))
+                .ToList();
+
+        private static ImpactMapSectionDetails CreateImpactSection(
+            ImpactMapItemType itemType,
+            string title,
+            string summary,
+            string emptyState,
+            IReadOnlyList<ImpactMapItem> items) =>
+            new(
+                $"impact-map-section-{ImpactMapIds.GetSectionId(itemType)}",
+                title,
+                summary,
+                emptyState,
+                items,
+                FormatItemCount(items.Count));
+
+        private static string FormatItemCount(int count)
+        {
+            if (count % 100 is >= 11 and <= 14)
+            {
+                return $"{count} элементов";
+            }
+
+            return (count % 10) switch
+            {
+                1 => $"{count} элемент",
+                >= 2 and <= 4 => $"{count} элемента",
+                _ => $"{count} элементов"
+            };
+        }
     }
 
     public sealed record AiAnalysisResultMetadataDetails(
@@ -493,9 +618,27 @@ public sealed class DetailsModel(
         RetrievedContextItemCompleteness Completeness,
         string? WarningOrLimitationNote);
 
-    public sealed record ImpactMapSectionDetails(
+    public sealed record ImpactMapSectionGroupDetails(
+        string Anchor,
         string Title,
-        IReadOnlyList<ImpactMapItem> Items);
+        string Summary,
+        IReadOnlyList<ImpactMapSectionDetails> Sections)
+    {
+        public int ItemCount => Sections.Sum(section => section.Items.Count);
+    }
+
+    public sealed record ImpactMapSummaryDetails(
+        string Title,
+        string CountLabel,
+        string Description);
+
+    public sealed record ImpactMapSectionDetails(
+        string Anchor,
+        string Title,
+        string Summary,
+        string EmptyState,
+        IReadOnlyList<ImpactMapItem> Items,
+        string CountLabel);
 
     public sealed record ContextFragmentDetails(
         Guid Id,

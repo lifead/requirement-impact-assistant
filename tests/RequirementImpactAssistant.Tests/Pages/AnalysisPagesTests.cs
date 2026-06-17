@@ -324,6 +324,92 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
+    public async Task DetailsPage_BuildsReadableImpactMapGroupsFromSavedImpactMap()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 09, 30, 00, TimeSpan.Zero));
+            analysis.AiAnalysisResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.Completed,
+                CreateImpactMap());
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var aiResult = pageModel.Analysis.AiAnalysisResult!;
+
+                Assert.Collection(
+                    aiResult.ImpactMapSummaryCards,
+                    summary =>
+                    {
+                        Assert.Equal("Ориентиры анализа", summary.Title);
+                        Assert.Equal("2 элемента", summary.CountLabel);
+                    },
+                    summary =>
+                    {
+                        Assert.Equal("Затронутые элементы", summary.Title);
+                        Assert.Equal("1 элемент", summary.CountLabel);
+                    },
+                    summary =>
+                    {
+                        Assert.Equal("Риски, вопросы и ограничения", summary.Title);
+                        Assert.Equal("1 элемент", summary.CountLabel);
+                    });
+
+                Assert.Collection(
+                    aiResult.ImpactSectionGroups,
+                    group =>
+                    {
+                        Assert.Equal("impact-map-orientation", group.Anchor);
+                        Assert.Equal(2, group.ItemCount);
+                    },
+                    group =>
+                    {
+                        Assert.Equal("impact-map-affected-elements", group.Anchor);
+                        Assert.Equal(1, group.ItemCount);
+                        Assert.Contains(group.Sections, section => section.Anchor == "impact-map-section-affected-requirements");
+                    },
+                    group =>
+                    {
+                        Assert.Equal("impact-map-risks-questions", group.Anchor);
+                        Assert.Equal(1, group.ItemCount);
+                        Assert.Contains(group.Sections, section => section.Anchor == "impact-map-section-risks");
+                    });
+
+                Assert.Equal(13, aiResult.ImpactSections.Count);
+                var emptyContradictions = Assert.Single(
+                    aiResult.ImpactSections,
+                    section => section.Anchor == "impact-map-section-contradictions");
+                Assert.Empty(emptyContradictions.Items);
+                Assert.Contains("не подтверждает их отсутствие", emptyContradictions.EmptyState, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task ReviewPage_OpensExistingAnalysisWithContextFromSqlite()
     {
         var databasePath = CreateDatabasePath();
@@ -610,6 +696,35 @@ public sealed class AnalysisPagesTests
                 "OnPostRunAnalysis"
             },
             token => Assert.DoesNotContain(token, combinedSource, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void DetailsPage_SourceRendersImpactMapReadabilitySectionsAsPreliminaryMaterial()
+    {
+        var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+        var detailsModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml.cs");
+        var combinedSource = detailsSource + detailsModelSource;
+
+        Assert.Contains("id=\"impact-map\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Навигация по карте влияния\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("aiResult.ImpactMapSummaryCards", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("aiResult.ImpactSectionGroups", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"@impactGroup.Anchor\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"@impactSection.Anchor\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("preliminary analytical material", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("не является экспертным заключением", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("Проверьте предупреждения, ограничения", detailsSource, StringComparison.Ordinal);
+
+        Assert.Contains("ImpactMapSummaryCards", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("ImpactSectionGroups", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("impact-map-affected-elements", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("impact-map-risks-questions", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("не подтверждает отсутствие влияния", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("не подтверждает их отсутствие", detailsModelSource, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("OnPostApprove", combinedSource, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("OnPostStartWorkflow", combinedSource, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("dashboard", combinedSource, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
