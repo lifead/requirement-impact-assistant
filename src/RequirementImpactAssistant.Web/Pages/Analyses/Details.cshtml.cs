@@ -229,7 +229,140 @@ public sealed class DetailsModel(
         bool HasExpertEvaluation,
         ExpertConclusionDetails? ExpertConclusion,
         AiAnalysisResultDetails? AiAnalysisResult,
-        IReadOnlyList<ContextFragmentDetails> ContextFragments);
+        IReadOnlyList<ContextFragmentDetails> ContextFragments)
+    {
+        public IReadOnlyList<DetailsStatusSummaryItem> StatusSummaryItems =>
+            BuildStatusSummaryItems();
+
+        private IReadOnlyList<DetailsStatusSummaryItem> BuildStatusSummaryItems()
+        {
+            var hasPreliminaryImpactMap = AiAnalysisResult?.ImpactMap is not null &&
+                AiAnalysisResult.Status is AiAnalysisResultStatus.Completed or AiAnalysisResultStatus.CompletedWithWarnings;
+
+            return
+            [
+                new(
+                    "input",
+                    "Входные данные",
+                    AnalysisUiText.AnalysisStatusLabel(Status),
+                    $"{AnalysisUiText.ProjectRequestTypeLabel(ProjectRequestType)}; источник: {ChangeSource}.",
+                    "analysis-input",
+                    "text-bg-secondary",
+                    [new("Проверить ввод", "/Analyses/Review", null)]),
+                new(
+                    "manual-context",
+                    "Ручной контекст",
+                    ContextFragments.Count == 0 ? "Не добавлен" : $"Добавлено: {ContextFragments.Count}",
+                    ContextFragments.Count == 0
+                        ? "Пользовательские фрагменты контекста пока не добавлены."
+                        : "Пользовательские фрагменты сохранены отдельно от retrieved context.",
+                    "manual-context",
+                    ContextFragments.Count == 0 ? "text-bg-light text-dark" : "text-bg-info",
+                    []),
+                new(
+                    "preliminary-result",
+                    "Предварительный результат",
+                    AiAnalysisResult is null
+                        ? "Не сформирован"
+                        : AnalysisUiText.AiResultStatusLabel(AiAnalysisResult.Status),
+                    AiAnalysisResult is null
+                        ? "Сохраненного AI/RAG/LLM результата пока нет."
+                        : "Сохраненный предварительный материал доступен для экспертного рассмотрения.",
+                    "preliminary-result",
+                    AiAnalysisResult is null ? "text-bg-light text-dark" : "text-bg-secondary",
+                    []),
+                new(
+                    "grounds-limitations",
+                    "Основания и ограничения",
+                    GetGroundsStatusLabel(),
+                    GetGroundsDescription(),
+                    "grounds-limitations",
+                    AiAnalysisResult?.Metadata.Warnings.Count > 0 ? "text-bg-warning" : "text-bg-secondary",
+                    []),
+                new(
+                    "expert-evaluation",
+                    "Экспертная оценка",
+                    HasExpertEvaluation
+                        ? "Зафиксирована"
+                        : hasPreliminaryImpactMap ? "Доступна" : "Недоступна",
+                    HasExpertEvaluation
+                        ? "Экспертная оценка сохранена как человеческий слой проверки."
+                        : hasPreliminaryImpactMap
+                            ? "Можно открыть существующую страницу экспертной оценки."
+                            : "Нужен сохраненный предварительный результат со структурированной картой влияния.",
+                    "expert-evaluation",
+                    HasExpertEvaluation ? "text-bg-success" : "text-bg-light text-dark",
+                    hasPreliminaryImpactMap ? [new("Открыть оценку", "/Analyses/ExpertEvaluation", null)] : []),
+                new(
+                    "expert-conclusion",
+                    "Экспертное заключение",
+                    ExpertConclusion is null ? "Не зафиксировано" : "Зафиксировано",
+                    ExpertConclusion is null
+                        ? "Итоговое заключение эксперта-человека пока не сохранено."
+                        : $"{AnalysisUiText.ExpertConclusionTypeLabel(ExpertConclusion.ConclusionType)}; зафиксировано человеком.",
+                    "expert-conclusion",
+                    ExpertConclusion is null ? "text-bg-light text-dark" : "text-bg-success",
+                    HasExpertEvaluation ? [new("Открыть заключение", "/Analyses/ExpertConclusion", null)] : []),
+                new(
+                    "export",
+                    "Экспорт",
+                    ExpertConclusion is null ? "Недоступен" : "Доступен",
+                    ExpertConclusion is null
+                        ? "Markdown/JSON выгрузка доступна после сохраненного экспертного заключения."
+                        : "Можно скачать сохраненный артефакт без повторного анализа.",
+                    "export",
+                    ExpertConclusion is null ? "text-bg-light text-dark" : "text-bg-secondary",
+                    ExpertConclusion is null
+                        ? []
+                        :
+                        [
+                            new("Скачать JSON", null, "ExportJson"),
+                            new("Скачать Markdown", null, "ExportMarkdown")
+                        ])
+            ];
+        }
+
+        private string GetGroundsStatusLabel()
+        {
+            if (AiAnalysisResult is null)
+            {
+                return "Нет результата";
+            }
+
+            if (AiAnalysisResult.Metadata.Warnings.Count > 0)
+            {
+                return $"Предупреждения: {AiAnalysisResult.Metadata.Warnings.Count}";
+            }
+
+            return AnalysisUiText.RetrievedContextStateLabel(AiAnalysisResult.Metadata.RetrievedContextState);
+        }
+
+        private string GetGroundsDescription()
+        {
+            if (AiAnalysisResult is null)
+            {
+                return "Метаданные, warnings и limitation notes появятся после сохраненного результата.";
+            }
+
+            return
+                $"{AnalysisUiText.AnalysisModeLabel(AiAnalysisResult.Metadata.AnalysisMode)}; " +
+                AnalysisUiText.RetrievedContextStateDescription(AiAnalysisResult.Metadata.RetrievedContextState);
+        }
+    }
+
+    public sealed record DetailsStatusSummaryItem(
+        string Key,
+        string Title,
+        string StatusLabel,
+        string Description,
+        string Anchor,
+        string BadgeCssClass,
+        IReadOnlyList<DetailsStatusSummaryAction> Actions);
+
+    public sealed record DetailsStatusSummaryAction(
+        string Label,
+        string? PageName,
+        string? HandlerName);
 
     public sealed record ExpertConclusionDetails(
         ExpertConclusionType ConclusionType,

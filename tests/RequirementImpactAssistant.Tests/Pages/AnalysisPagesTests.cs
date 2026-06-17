@@ -189,6 +189,134 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
+    public async Task DetailsPage_BuildsPassiveSemanticStatusSummaryFromSavedData()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.ExpertConclusionFixed,
+                new DateTimeOffset(2026, 06, 13, 09, 30, 00, TimeSpan.Zero));
+            analysis.ContextFragments.Add(CreateContextFragment(
+                analysis.Id,
+                ContextFragmentType.Task,
+                "Task tracker",
+                "Manual context.",
+                new DateTimeOffset(2026, 06, 13, 09, 45, 00, TimeSpan.Zero)));
+            var aiResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.CompletedWithWarnings,
+                CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                RetrievedContextState = RetrievedContextState.Partial,
+                Warnings = ["Retrieved context was partial."]
+            };
+            analysis.AiAnalysisResult = aiResult;
+            analysis.ExpertEvaluation = CreateExpertEvaluation(analysis.Id);
+            analysis.ExpertConclusion = new ExpertConclusion
+            {
+                AnalysisId = analysis.Id,
+                ConclusionType = ExpertConclusionType.AcceptWithLimitations,
+                Comment = "Accepted with limitations.",
+                Rationale = "Human expert confirmed the material.",
+                FixedAt = new DateTimeOffset(2026, 06, 13, 10, 00, 00, TimeSpan.Zero)
+            };
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                Assert.Collection(
+                    pageModel.Analysis.StatusSummaryItems,
+                    item =>
+                    {
+                        Assert.Equal("input", item.Key);
+                        Assert.Equal("Входные данные", item.Title);
+                        Assert.Equal("Экспертное заключение зафиксировано", item.StatusLabel);
+                        Assert.Equal("analysis-input", item.Anchor);
+                        Assert.Equal("/Analyses/Review", Assert.Single(item.Actions).PageName);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("manual-context", item.Key);
+                        Assert.Equal("Добавлено: 1", item.StatusLabel);
+                        Assert.Empty(item.Actions);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("preliminary-result", item.Key);
+                        Assert.Equal("Завершено с предупреждениями", item.StatusLabel);
+                        Assert.Empty(item.Actions);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("grounds-limitations", item.Key);
+                        Assert.Equal("Предупреждения: 1", item.StatusLabel);
+                        Assert.Contains("External AI/RAG", item.Description, StringComparison.Ordinal);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("expert-evaluation", item.Key);
+                        Assert.Equal("Зафиксирована", item.StatusLabel);
+                        Assert.Equal("/Analyses/ExpertEvaluation", Assert.Single(item.Actions).PageName);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("expert-conclusion", item.Key);
+                        Assert.Equal("Зафиксировано", item.StatusLabel);
+                        Assert.Equal("/Analyses/ExpertConclusion", Assert.Single(item.Actions).PageName);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("export", item.Key);
+                        Assert.Equal("Доступен", item.StatusLabel);
+                        Assert.Collection(
+                            item.Actions,
+                            action => Assert.Equal("ExportJson", action.HandlerName),
+                            action => Assert.Equal("ExportMarkdown", action.HandlerName));
+                    });
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var unchanged = await dbContext.Analyses
+                    .Include(candidate => candidate.ContextFragments)
+                    .Include(candidate => candidate.AiAnalysisResult)
+                    .Include(candidate => candidate.ExpertEvaluation)
+                    .Include(candidate => candidate.ExpertConclusion)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(AnalysisStatus.ExpertConclusionFixed, unchanged.Status);
+                Assert.Single(unchanged.ContextFragments);
+                Assert.NotNull(unchanged.AiAnalysisResult);
+                Assert.NotNull(unchanged.ExpertEvaluation);
+                Assert.NotNull(unchanged.ExpertConclusion);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task ReviewPage_OpensExistingAnalysisWithContextFromSqlite()
     {
         var databasePath = CreateDatabasePath();
@@ -438,6 +566,42 @@ public sealed class AnalysisPagesTests
         Assert.Contains("AnalysisUiText.ProjectRequestRequiredMessage", formInputSource, StringComparison.Ordinal);
         Assert.Contains("AnalysisUiText.SituationDescriptionRequiredMessage", formInputSource, StringComparison.Ordinal);
         Assert.Contains("AnalysisUiText.ChangeSourceRequiredMessage", formInputSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DetailsPage_SourceRendersSemanticSummaryForExistingSectionsAndActions()
+    {
+        var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+        var detailsModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml.cs");
+        var combinedSource = detailsSource + detailsModelSource;
+
+        Assert.Contains("Model.Analysis.StatusSummaryItems", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("href=\"#@summaryItem.Anchor\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"analysis-input\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"manual-context\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"preliminary-result\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"grounds-limitations\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"expert-evaluation\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"expert-conclusion\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"export\"", detailsSource, StringComparison.Ordinal);
+
+        Assert.Contains("new(\"Проверить ввод\", \"/Analyses/Review\", null)", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("new(\"Открыть оценку\", \"/Analyses/ExpertEvaluation\", null)", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("new(\"Открыть заключение\", \"/Analyses/ExpertConclusion\", null)", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("new(\"Скачать JSON\", null, \"ExportJson\")", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("new(\"Скачать Markdown\", null, \"ExportMarkdown\")", detailsModelSource, StringComparison.Ordinal);
+
+        Assert.All(
+            new[]
+            {
+                "Dashboard",
+                "Taskboard",
+                "Approval",
+                "OnPostApprove",
+                "OnPostStartWorkflow",
+                "OnPostRunAnalysis"
+            },
+            token => Assert.DoesNotContain(token, combinedSource, StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

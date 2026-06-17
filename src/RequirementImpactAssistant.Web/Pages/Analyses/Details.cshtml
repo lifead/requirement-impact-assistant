@@ -67,6 +67,58 @@
             <div class="alert alert-info" role="status">@Model.AnalysisRunMessage</div>
         }
 
+        <section class="border rounded p-3 mb-4" aria-labelledby="details-status-summary-heading">
+            <div class="mb-3">
+                <h2 id="details-status-summary-heading" class="h5 mb-1">Сценарий анализа</h2>
+                <p class="text-muted mb-0">Пассивная карта сохраненного материала и доступных переходов.</p>
+            </div>
+
+            <div class="row g-3">
+                @foreach (var summaryItem in Model.Analysis.StatusSummaryItems)
+                {
+                    <div class="col-md-6 col-xl-4">
+                        <article class="h-100 border rounded p-3">
+                            <div class="d-flex align-items-start justify-content-between gap-3 mb-2">
+                                <h3 class="h6 mb-0">@summaryItem.Title</h3>
+                                <span class="badge @summaryItem.BadgeCssClass">@summaryItem.StatusLabel</span>
+                            </div>
+
+                            <p class="text-muted small mb-3">@summaryItem.Description</p>
+
+                            <div class="d-flex flex-wrap gap-2">
+                                <a class="btn btn-outline-secondary btn-sm" href="#@summaryItem.Anchor">К разделу</a>
+                                @foreach (var action in summaryItem.Actions)
+                                {
+                                    @if (!string.IsNullOrWhiteSpace(action.PageName))
+                                    {
+                                        <a class="btn btn-outline-secondary btn-sm"
+                                           asp-page="@action.PageName"
+                                           asp-route-id="@Model.Analysis.Id">
+                                            @action.Label
+                                        </a>
+                                    }
+                                    else if (!string.IsNullOrWhiteSpace(action.HandlerName))
+                                    {
+                                        <a class="btn btn-outline-secondary btn-sm"
+                                           asp-page-handler="@action.HandlerName"
+                                           asp-route-id="@Model.Analysis.Id">
+                                            @action.Label
+                                        </a>
+                                    }
+                                }
+                            </div>
+                        </article>
+                    </div>
+                }
+            </div>
+        </section>
+
+        <section id="analysis-input" class="pt-2">
+            <div class="mb-3">
+                <h2 class="h4 mb-2">Входные данные</h2>
+                <p class="text-muted mb-0">Сохраненный пользовательский ввод для этого анализа.</p>
+            </div>
+
         <dl class="row">
             <dt class="col-sm-3">Идентификатор</dt>
             <dd class="col-sm-9"><code>@Model.Analysis.Id</code></dd>
@@ -95,16 +147,23 @@
             <dt class="col-sm-3">@AnalysisUiText.SituationDescriptionLabel</dt>
             <dd class="col-sm-9">@Model.Analysis.SituationDescription</dd>
         </dl>
+        </section>
     </section>
 
-    @if (Model.Analysis.ExpertConclusion is not null)
-    {
-        <section class="py-4 border-top">
-            <div class="mb-4">
-                <h2 class="h4 mb-2">Экспертное заключение</h2>
-                <p class="text-muted mb-0">Итоговое заключение, зафиксированное экспертом-человеком.</p>
-            </div>
+    <section id="expert-conclusion" class="py-4 border-top">
+        <div class="mb-4">
+            <h2 class="h4 mb-2">Экспертное заключение</h2>
+            <p class="text-muted mb-0">Итоговое заключение, зафиксированное экспертом-человеком.</p>
+        </div>
 
+        @if (Model.Analysis.ExpertConclusion is null)
+        {
+            <div class="border rounded p-4 bg-light">
+                <p class="mb-0">Экспертное заключение еще не зафиксировано.</p>
+            </div>
+        }
+        else
+        {
             <dl class="row">
                 <dt class="col-sm-3">Тип</dt>
                 <dd class="col-sm-9">@AnalysisUiText.ExpertConclusionTypeLabel(Model.Analysis.ExpertConclusion.ConclusionType)</dd>
@@ -118,10 +177,10 @@
                 <dt class="col-sm-3">Обоснование</dt>
                 <dd class="col-sm-9">@Model.Analysis.ExpertConclusion.Rationale</dd>
             </dl>
-        </section>
-    }
+        }
+    </section>
 
-    <section class="py-4 border-top">
+    <section id="preliminary-result" class="py-4 border-top">
         <div class="mb-4">
             <h2 class="h4 mb-2">Предварительный результат AI-анализа</h2>
             <p class="text-muted mb-0">Этот материал является предварительным аналитическим материалом для экспертного рассмотрения человеком и не является управленческим решением.</p>
@@ -132,6 +191,12 @@
             <div class="border rounded p-4 bg-light">
                 <p class="mb-0">Предварительный результат анализа еще не сформирован.</p>
             </div>
+            <section id="grounds-limitations" class="mt-4">
+                <h3 class="h5 mb-3">Основания и ограничения</h3>
+                <div class="border rounded p-4 bg-light">
+                    <p class="mb-0">Основания и ограничения будут доступны после формирования предварительного результата.</p>
+                </div>
+            </section>
         }
         else
         {
@@ -203,8 +268,8 @@
             @if (aiResult.Metadata.AnalysisMode == AnalysisMode.ExternalRag ||
                 aiResult.Metadata.RetrievedContextItems.Count > 0)
             {
-                <section class="mb-4">
-                    <h3 class="h5 mb-3">Основание external AI/RAG результата</h3>
+                <section id="grounds-limitations" class="mb-4">
+                    <h3 class="h5 mb-3">Основания и ограничения</h3>
 
                     <dl class="row">
                         <dt class="col-sm-3">Состояние</dt>
@@ -305,6 +370,15 @@
                     }
                 </section>
             }
+            else
+            {
+                <section id="grounds-limitations" class="mb-4">
+                    <h3 class="h5 mb-3">Основания и ограничения</h3>
+                    <div class="border rounded p-4 bg-light">
+                        <p class="mb-0">Для режима Direct LLM отдельное внешнее основание retrieved context не сохраняется.</p>
+                    </div>
+                </section>
+            }
 
             @if (aiResult.ImpactMap is null)
             {
@@ -379,7 +453,51 @@
         }
     </section>
 
-    <section class="py-4 border-top">
+    <section id="expert-evaluation" class="py-4 border-top">
+        <div class="mb-4">
+            <h2 class="h4 mb-2">Экспертная оценка</h2>
+            <p class="text-muted mb-0">Человеческая проверка предварительного результата.</p>
+        </div>
+
+        <div class="border rounded p-4 bg-light">
+            <p class="mb-0">
+                @(Model.Analysis.HasExpertEvaluation
+                    ? "Экспертная оценка зафиксирована."
+                    : "Экспертная оценка еще не зафиксирована.")
+            </p>
+        </div>
+    </section>
+
+    <section id="export" class="py-4 border-top">
+        <div class="mb-4">
+            <h2 class="h4 mb-2">Экспорт</h2>
+            <p class="text-muted mb-0">Выгрузка сохраненного артефакта через существующие Markdown/JSON действия.</p>
+        </div>
+
+        @if (Model.Analysis.ExpertConclusion is null)
+        {
+            <div class="border rounded p-4 bg-light">
+                <p class="mb-0">Экспорт будет доступен после фиксации экспертного заключения.</p>
+            </div>
+        }
+        else
+        {
+            <div class="d-flex flex-wrap gap-2">
+                <a class="btn btn-outline-secondary btn-sm"
+                   asp-page-handler="ExportJson"
+                   asp-route-id="@Model.Analysis.Id">
+                    Скачать JSON
+                </a>
+                <a class="btn btn-outline-secondary btn-sm"
+                   asp-page-handler="ExportMarkdown"
+                   asp-route-id="@Model.Analysis.Id">
+                    Скачать Markdown
+                </a>
+            </div>
+        }
+    </section>
+
+    <section id="manual-context" class="py-4 border-top">
         <div class="mb-4">
             <h2 class="h4 mb-2">Фрагменты контекста</h2>
             <p class="text-muted mb-0">Контекст, вручную добавленный к этому сохраненному анализу.</p>
