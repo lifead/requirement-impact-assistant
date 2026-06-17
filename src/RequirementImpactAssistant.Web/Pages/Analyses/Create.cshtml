@@ -24,36 +24,40 @@
         </div>
 
         <div>
-            <label asp-for="Input.ProjectRequestType" class="form-label">Тип проектного запроса</label>
+            <label asp-for="Input.ProjectRequestType" class="form-label">@AnalysisUiText.ProjectRequestTypeFieldLabel</label>
             <select asp-for="Input.ProjectRequestType"
                     asp-items="AnalysisUiText.ProjectRequestTypeItems()"
                     class="form-select">
-                <option value="">Выберите тип проектного запроса</option>
+                <option value="">@AnalysisUiText.ProjectRequestTypePlaceholder</option>
             </select>
             <span asp-validation-for="Input.ProjectRequestType" class="text-danger"></span>
         </div>
 
         <div>
-            <label asp-for="Input.OriginalDescription" class="form-label">Исходное описание</label>
+            <label asp-for="Input.OriginalDescription" class="form-label">@AnalysisUiText.OriginalDescriptionLabel</label>
             <textarea asp-for="Input.OriginalDescription" class="form-control" rows="4"></textarea>
+            <div class="form-text">@AnalysisUiText.OriginalDescriptionHelpText</div>
             <span asp-validation-for="Input.OriginalDescription" class="text-danger"></span>
         </div>
 
         <div>
-            <label asp-for="Input.ProjectRequest" class="form-label">Проектный запрос</label>
+            <label asp-for="Input.ProjectRequest" class="form-label">@AnalysisUiText.ProjectRequestLabel</label>
             <textarea asp-for="Input.ProjectRequest" class="form-control" rows="4"></textarea>
+            <div class="form-text">@AnalysisUiText.ProjectRequestHelpText</div>
             <span asp-validation-for="Input.ProjectRequest" class="text-danger"></span>
         </div>
 
         <div>
-            <label asp-for="Input.SituationDescription" class="form-label">Описание ситуации</label>
+            <label asp-for="Input.SituationDescription" class="form-label">@AnalysisUiText.SituationDescriptionLabel</label>
             <textarea asp-for="Input.SituationDescription" class="form-control" rows="4"></textarea>
+            <div class="form-text">@AnalysisUiText.SituationDescriptionHelpText</div>
             <span asp-validation-for="Input.SituationDescription" class="text-danger"></span>
         </div>
 
         <div>
-            <label asp-for="Input.ChangeSource" class="form-label">Источник изменения</label>
+            <label asp-for="Input.ChangeSource" class="form-label">@AnalysisUiText.ChangeSourceLabel</label>
             <input asp-for="Input.ChangeSource" class="form-control" />
+            <div class="form-text">@AnalysisUiText.ChangeSourceHelpText</div>
             <span asp-validation-for="Input.ChangeSource" class="text-danger"></span>
         </div>
 

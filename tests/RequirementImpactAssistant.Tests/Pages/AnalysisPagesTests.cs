@@ -305,6 +305,51 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
+    public void InputFieldUiText_UsesMvp3Terminology()
+    {
+        Assert.Equal("Текущее состояние", AnalysisUiText.OriginalDescriptionLabel);
+        Assert.Equal("Проектное изменение", AnalysisUiText.ProjectRequestLabel);
+        Assert.Equal("Ситуация и причина изменения", AnalysisUiText.SituationDescriptionLabel);
+        Assert.Equal("Источник изменения", AnalysisUiText.ChangeSourceLabel);
+
+        Assert.Contains("точку отсчета", AnalysisUiText.OriginalDescriptionHelpText, StringComparison.Ordinal);
+        Assert.Contains("без предположения, что оно уже принято", AnalysisUiText.ProjectRequestHelpText, StringComparison.Ordinal);
+        Assert.Contains("причину", AnalysisUiText.SituationDescriptionHelpText, StringComparison.Ordinal);
+        Assert.Contains("источник запроса", AnalysisUiText.ChangeSourceHelpText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InputFieldPageSourcesUseCentralizedUiText()
+    {
+        var sources = new[]
+        {
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Create.cshtml"),
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Edit.cshtml"),
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml"),
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Review.cshtml")
+        };
+
+        Assert.All(
+            sources,
+            source =>
+            {
+                Assert.Contains("AnalysisUiText.OriginalDescriptionLabel", source, StringComparison.Ordinal);
+                Assert.Contains("AnalysisUiText.ProjectRequestLabel", source, StringComparison.Ordinal);
+                Assert.Contains("AnalysisUiText.SituationDescriptionLabel", source, StringComparison.Ordinal);
+                Assert.Contains("AnalysisUiText.ChangeSourceLabel", source, StringComparison.Ordinal);
+                Assert.DoesNotContain("Исходное описание", source, StringComparison.Ordinal);
+                Assert.DoesNotContain("Проектный запрос", source, StringComparison.Ordinal);
+                Assert.DoesNotContain("Описание ситуации", source, StringComparison.Ordinal);
+            });
+
+        var formInputSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/AnalysisFormInput.cs");
+        Assert.Contains("AnalysisUiText.OriginalDescriptionRequiredMessage", formInputSource, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.ProjectRequestRequiredMessage", formInputSource, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.SituationDescriptionRequiredMessage", formInputSource, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.ChangeSourceRequiredMessage", formInputSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ReviewPage_LoadsOnlyCurrentAnalysisContext()
     {
         var databasePath = CreateDatabasePath();

@@ -6,6 +6,26 @@ namespace RequirementImpactAssistant.Web.Pages.Analyses;
 
 public static class AnalysisUiText
 {
+    public const string ProjectRequestTypeFieldLabel = "Тип проектного запроса";
+    public const string ProjectRequestTypePlaceholder = "Выберите тип проектного запроса";
+    public const string ProjectRequestTypeRequiredMessage = "Тип проектного запроса обязателен.";
+
+    public const string OriginalDescriptionLabel = "Текущее состояние";
+    public const string OriginalDescriptionHelpText = "Кратко опишите текущую точку отсчета: требование, процесс, API, интеграцию, ограничение или проектное решение на момент анализа.";
+    public const string OriginalDescriptionRequiredMessage = "Текущее состояние обязательно.";
+
+    public const string ProjectRequestLabel = "Проектное изменение";
+    public const string ProjectRequestHelpText = "Опишите предлагаемое проектное изменение как предмет анализа, без предположения, что оно уже принято.";
+    public const string ProjectRequestRequiredMessage = "Проектное изменение обязательно.";
+
+    public const string SituationDescriptionLabel = "Ситуация и причина изменения";
+    public const string SituationDescriptionHelpText = "Укажите обстоятельства и причину, из-за которых рассматривается изменение.";
+    public const string SituationDescriptionRequiredMessage = "Ситуация и причина изменения обязательны.";
+
+    public const string ChangeSourceLabel = "Источник изменения";
+    public const string ChangeSourceHelpText = "Укажите источник запроса: встреча, документ, задача, письмо или другое основание.";
+    public const string ChangeSourceRequiredMessage = "Источник изменения обязателен.";
+
     public static IEnumerable<SelectListItem> ContextFragmentTypeItems() =>
         Enum.GetValues<ContextFragmentType>()
             .Select(value => new SelectListItem(ContextFragmentTypeLabel(value), ((int)value).ToString()));

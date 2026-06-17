@@ -80,19 +80,19 @@
             <dt class="col-sm-3">Зафиксировано</dt>
             <dd class="col-sm-9">@(Model.Analysis.FixedAt?.ToLocalTime().ToString("g") ?? "Не зафиксировано")</dd>
 
-            <dt class="col-sm-3">Источник изменения</dt>
+            <dt class="col-sm-3">@AnalysisUiText.ChangeSourceLabel</dt>
             <dd class="col-sm-9">@Model.Analysis.ChangeSource</dd>
 
-            <dt class="col-sm-3">Тип проектного запроса</dt>
+            <dt class="col-sm-3">@AnalysisUiText.ProjectRequestTypeFieldLabel</dt>
             <dd class="col-sm-9">@AnalysisUiText.ProjectRequestTypeLabel(Model.Analysis.ProjectRequestType)</dd>
 
-            <dt class="col-sm-3">Исходное описание</dt>
+            <dt class="col-sm-3">@AnalysisUiText.OriginalDescriptionLabel</dt>
             <dd class="col-sm-9">@Model.Analysis.OriginalDescription</dd>
 
-            <dt class="col-sm-3">Проектный запрос</dt>
+            <dt class="col-sm-3">@AnalysisUiText.ProjectRequestLabel</dt>
             <dd class="col-sm-9">@Model.Analysis.ProjectRequest</dd>
 
-            <dt class="col-sm-3">Описание ситуации</dt>
+            <dt class="col-sm-3">@AnalysisUiText.SituationDescriptionLabel</dt>
             <dd class="col-sm-9">@Model.Analysis.SituationDescription</dd>
         </dl>
     </section>
