@@ -261,6 +261,13 @@ public sealed class AnalysisPagesTests
                     },
                     item =>
                     {
+                        Assert.Equal("retrieved-context", item.Key);
+                        Assert.Equal("Контекст сохранен частично", item.StatusLabel);
+                        Assert.Contains("metadata retrieved context", item.Description, StringComparison.Ordinal);
+                        Assert.Empty(item.Actions);
+                    },
+                    item =>
+                    {
                         Assert.Equal("preliminary-result", item.Key);
                         Assert.Equal("Завершено с предупреждениями", item.StatusLabel);
                         Assert.Empty(item.Actions);
@@ -579,6 +586,7 @@ public sealed class AnalysisPagesTests
         Assert.Contains("href=\"#@summaryItem.Anchor\"", detailsSource, StringComparison.Ordinal);
         Assert.Contains("id=\"analysis-input\"", detailsSource, StringComparison.Ordinal);
         Assert.Contains("id=\"manual-context\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"retrieved-context\"", detailsSource, StringComparison.Ordinal);
         Assert.Contains("id=\"preliminary-result\"", detailsSource, StringComparison.Ordinal);
         Assert.Contains("id=\"grounds-limitations\"", detailsSource, StringComparison.Ordinal);
         Assert.Contains("id=\"expert-evaluation\"", detailsSource, StringComparison.Ordinal);
@@ -602,6 +610,26 @@ public sealed class AnalysisPagesTests
                 "OnPostRunAnalysis"
             },
             token => Assert.DoesNotContain(token, combinedSource, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void DetailsPage_SourceSeparatesManualContextFromRetrievedContext()
+    {
+        var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+        var detailsModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml.cs");
+        var combinedSource = detailsSource + detailsModelSource;
+
+        Assert.Contains("Manual context карточки анализа", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("Это материалы, введенные пользователем в карточке анализа.", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("Retrieved context внешнего AI/RAG", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("RAG knowledge base остается внешней базой provider-а.", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("только фрагменты или metadata, которые provider вернул для конкретного анализа", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("manual context и retrieved context показаны в отдельных разделах", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("Direct LLM не создает искусственный retrieved context", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("GetRetrievedContextStatusLabel()", detailsModelSource, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("внутренняя база", combinedSource, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("основан на извлеченном контексте", combinedSource, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1467,6 +1495,8 @@ public sealed class AnalysisPagesTests
                 Assert.False(metadata.ManualContextForwardedToExternalAiOrRag);
                 Assert.Empty(metadata.Warnings);
                 Assert.Empty(metadata.RetrievedContextItems);
+                Assert.False(metadata.HasRetrievedContextItems);
+                Assert.True(metadata.IsDirectLlmWithoutRetrievedContext);
             }
 
             var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
@@ -1617,6 +1647,8 @@ public sealed class AnalysisPagesTests
                 Assert.NotNull(pageModel.Analysis);
                 var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
                 Assert.Equal(RetrievedContextState.Available, metadata.RetrievedContextState);
+                Assert.True(metadata.HasRetrievedContextItems);
+                Assert.False(metadata.IsDirectLlmWithoutRetrievedContext);
                 var item = Assert.Single(metadata.RetrievedContextItems);
                 Assert.Equal("Gateway API requirement", item.SourceTitle);
                 Assert.Equal("REQ-42", item.SourceId);
@@ -1819,6 +1851,8 @@ public sealed class AnalysisPagesTests
                 var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
                 Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
                 Assert.Empty(metadata.RetrievedContextItems);
+                Assert.False(metadata.HasRetrievedContextItems);
+                Assert.False(metadata.IsDirectLlmWithoutRetrievedContext);
                 Assert.Contains(
                     "воспроизводимость",
                     AnalysisUiText.RetrievedContextStateDescription(metadata.RetrievedContextState));

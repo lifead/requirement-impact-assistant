@@ -251,13 +251,21 @@ public sealed class DetailsModel(
                     [new("Проверить ввод", "/Analyses/Review", null)]),
                 new(
                     "manual-context",
-                    "Ручной контекст",
+                    "Manual context",
                     ContextFragments.Count == 0 ? "Не добавлен" : $"Добавлено: {ContextFragments.Count}",
                     ContextFragments.Count == 0
-                        ? "Пользовательские фрагменты контекста пока не добавлены."
-                        : "Пользовательские фрагменты сохранены отдельно от retrieved context.",
+                        ? "Пользователь еще не ввел manual context в карточке анализа."
+                        : "Manual context введен пользователем и сохранен отдельно от retrieved context.",
                     "manual-context",
                     ContextFragments.Count == 0 ? "text-bg-light text-dark" : "text-bg-info",
+                    []),
+                new(
+                    "retrieved-context",
+                    "Retrieved context",
+                    GetRetrievedContextStatusLabel(),
+                    GetRetrievedContextDescription(),
+                    "retrieved-context",
+                    GetRetrievedContextBadgeCssClass(),
                     []),
                 new(
                     "preliminary-result",
@@ -348,6 +356,59 @@ public sealed class DetailsModel(
                 $"{AnalysisUiText.AnalysisModeLabel(AiAnalysisResult.Metadata.AnalysisMode)}; " +
                 AnalysisUiText.RetrievedContextStateDescription(AiAnalysisResult.Metadata.RetrievedContextState);
         }
+
+        private string GetRetrievedContextStatusLabel()
+        {
+            if (AiAnalysisResult is null)
+            {
+                return "Нет результата";
+            }
+
+            if (AiAnalysisResult.Metadata.IsDirectLlmWithoutRetrievedContext)
+            {
+                return "Не создается";
+            }
+
+            return AnalysisUiText.RetrievedContextStateLabel(AiAnalysisResult.Metadata.RetrievedContextState);
+        }
+
+        private string GetRetrievedContextDescription()
+        {
+            if (AiAnalysisResult is null)
+            {
+                return "Retrieved context появится только если внешний provider вернет его для конкретного анализа.";
+            }
+
+            if (AiAnalysisResult.Metadata.IsDirectLlmWithoutRetrievedContext)
+            {
+                return "Direct LLM не создает искусственный retrieved context.";
+            }
+
+            if (!AiAnalysisResult.Metadata.HasRetrievedContextItems)
+            {
+                return "Сохраненных фрагментов или metadata retrieved context для этого результата нет.";
+            }
+
+            return
+                $"Сохраненные фрагменты/metadata, возвращенные внешним provider-ом: {AiAnalysisResult.Metadata.RetrievedContextItems.Count}.";
+        }
+
+        private string GetRetrievedContextBadgeCssClass()
+        {
+            if (AiAnalysisResult is null || AiAnalysisResult.Metadata.IsDirectLlmWithoutRetrievedContext)
+            {
+                return "text-bg-light text-dark";
+            }
+
+            if (AiAnalysisResult.Metadata.RetrievedContextState == RetrievedContextState.Unavailable)
+            {
+                return "text-bg-warning";
+            }
+
+            return AiAnalysisResult.Metadata.HasRetrievedContextItems
+                ? "text-bg-secondary"
+                : "text-bg-light text-dark";
+        }
     }
 
     public sealed record DetailsStatusSummaryItem(
@@ -410,7 +471,14 @@ public sealed class DetailsModel(
         RetrievedContextState RetrievedContextState,
         bool ManualContextForwardedToExternalAiOrRag,
         IReadOnlyList<string> Warnings,
-        IReadOnlyList<RetrievedContextItemDetails> RetrievedContextItems);
+        IReadOnlyList<RetrievedContextItemDetails> RetrievedContextItems)
+    {
+        public bool HasRetrievedContextItems => RetrievedContextItems.Count > 0;
+
+        public bool IsDirectLlmWithoutRetrievedContext =>
+            AnalysisMode == RequirementImpactAssistant.Web.Domain.Enums.AnalysisMode.DirectLlm &&
+            !HasRetrievedContextItems;
+    }
 
     public sealed record RetrievedContextItemDetails(
         string SourceTitle,
