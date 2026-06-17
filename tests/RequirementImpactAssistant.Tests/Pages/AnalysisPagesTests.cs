@@ -2822,6 +2822,68 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
+    public void ExpertConclusionPage_SourcePresentsPassiveHumanRecordWithoutAnalysisOrWorkflowActions()
+    {
+        var constructor = Assert.Single(typeof(ExpertConclusionModel).GetConstructors());
+        Assert.Equal(
+            [typeof(ApplicationDbContext)],
+            constructor.GetParameters().Select(parameter => parameter.ParameterType).ToArray());
+
+        var conclusionSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/ExpertConclusion.cshtml");
+        var conclusionModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/ExpertConclusion.cshtml.cs");
+        var uiTextSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/AnalysisUiText.cs");
+        var combinedSource = string.Join(Environment.NewLine, conclusionSource, conclusionModelSource, uiTextSource);
+
+        Assert.Equal(
+            "Рекомендовать разделение на несколько задач",
+            AnalysisUiText.ExpertConclusionTypeLabel(ExpertConclusionType.SplitIntoSeveralTasks));
+        Assert.Equal(
+            "Рекомендовать повторный анализ",
+            AnalysisUiText.ExpertConclusionTypeLabel(ExpertConclusionType.ReturnForReanalysis));
+        Assert.Equal(
+            "Требуется уточнение",
+            AnalysisUiText.ExpertConclusionTypeLabel(ExpertConclusionType.SendForClarification));
+
+        Assert.Contains("ExpertConclusionHumanRecordHelpText", conclusionSource, StringComparison.Ordinal);
+        Assert.Contains("ExpertConclusionReadOnlySummaryText", conclusionSource, StringComparison.Ordinal);
+        Assert.Contains("PassiveExpertConclusionTypeHelpText", conclusionSource, StringComparison.Ordinal);
+        Assert.Contains("Сводка перед сохранением", conclusionSource, StringComparison.Ordinal);
+        Assert.Contains("Автоматические действия", conclusionSource, StringComparison.Ordinal);
+        Assert.Contains(
+            "не запускает повторный анализ автоматически",
+            AnalysisUiText.ExpertConclusionReadOnlySummaryText,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "не выполняют эти действия автоматически",
+            AnalysisUiText.PassiveExpertConclusionTypeHelpText,
+            StringComparison.Ordinal);
+
+        Assert.DoesNotContain("Разделить на несколько задач", uiTextSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Вернуть на повторный анализ", uiTextSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Отправить на уточнение", uiTextSource, StringComparison.Ordinal);
+
+        foreach (var forbiddenToken in new[]
+        {
+            "IAnalysisExecutionService",
+            "IAiAnalysisEngine",
+            "IAiAnalysisEngineSelector",
+            "IExternalRagAdapter",
+            "ILlmProvider",
+            "DifyExternalRagAdapter",
+            "DeepSeekLlmProvider",
+            ".RunAsync(",
+            ".AnalyzeAsync(",
+            "OnPostRunAnalysis",
+            "OnPostStartWorkflow",
+            "OnPostCreateTask",
+            "OnPostNotify"
+        })
+        {
+            Assert.DoesNotContain(forbiddenToken, combinedSource, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public async Task ExpertConclusionPage_OpensOnlyForAnalysisWithExpertEvaluation()
     {
         var databasePath = CreateDatabasePath();
@@ -3156,6 +3218,15 @@ public sealed class AnalysisPagesTests
                 AnalysisStatus.NeedsExpertEvaluation,
                 new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
             analysis.ExpertEvaluation = CreateExpertEvaluation(analysis.Id);
+            analysis.AiAnalysisResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.Completed,
+                CreateImpactMap());
+            var originalAiResultId = analysis.AiAnalysisResult.Id;
+            var originalAiGeneratedAt = analysis.AiAnalysisResult.GeneratedAt;
+            var originalAiInputSnapshot = analysis.AiAnalysisResult.InputSnapshot;
+            var originalAiRawResponse = analysis.AiAnalysisResult.RawResponse;
+            var originalAiPromptVersion = analysis.AiAnalysisResult.PromptVersion;
 
             await using (var dbContext = new ApplicationDbContext(options))
             {
@@ -3184,14 +3255,23 @@ public sealed class AnalysisPagesTests
                 var updated = await dbContext.Analyses
                     .Include(candidate => candidate.ExpertEvaluation)
                     .Include(candidate => candidate.ExpertConclusion)
+                    .Include(candidate => candidate.AiAnalysisResult)
                     .SingleAsync(candidate => candidate.Id == analysis.Id);
 
                 Assert.Equal(AnalysisStatus.ExpertConclusionFixed, updated.Status);
                 Assert.NotNull(updated.ExpertEvaluation);
                 var conclusion = Assert.IsType<ExpertConclusion>(updated.ExpertConclusion);
                 Assert.Equal(conclusionType, conclusion.ConclusionType);
+                var aiResult = Assert.IsType<AiAnalysisResult>(updated.AiAnalysisResult);
+                Assert.Equal(originalAiResultId, aiResult.Id);
+                Assert.Equal(AiAnalysisResultStatus.Completed, aiResult.Status);
+                Assert.Equal(originalAiGeneratedAt, aiResult.GeneratedAt);
+                Assert.Equal(originalAiInputSnapshot, aiResult.InputSnapshot);
+                Assert.Equal(originalAiRawResponse, aiResult.RawResponse);
+                Assert.Equal(originalAiPromptVersion, aiResult.PromptVersion);
                 Assert.Equal(1, await dbContext.ExpertEvaluations.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
                 Assert.Equal(1, await dbContext.ExpertConclusions.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
+                Assert.Equal(1, await dbContext.AiAnalysisResults.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
                 Assert.Empty(await dbContext.ContextFragments.Where(candidate => candidate.AnalysisId == analysis.Id).ToListAsync());
             }
         }

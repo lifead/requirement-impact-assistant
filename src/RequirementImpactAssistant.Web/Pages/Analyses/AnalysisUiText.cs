@@ -26,6 +26,15 @@ public static class AnalysisUiText
     public const string ChangeSourceHelpText = "Укажите источник запроса: встреча, документ, задача, письмо или другое основание.";
     public const string ChangeSourceRequiredMessage = "Источник изменения обязателен.";
 
+    public const string ExpertConclusionHumanRecordHelpText =
+        "Экспертное заключение фиксирует вывод человека по сохраненному предварительному материалу.";
+
+    public const string ExpertConclusionReadOnlySummaryText =
+        "При сохранении будет записан тип заключения, комментарий, обоснование и дата фиксации. Программа не создает задачи, уведомления, workflow, внешние запросы и не запускает повторный анализ автоматически.";
+
+    public const string PassiveExpertConclusionTypeHelpText =
+        "Типы с разделением на задачи или повторным анализом являются пассивной фиксацией экспертного вывода и не выполняют эти действия автоматически.";
+
     public static IEnumerable<SelectListItem> ContextFragmentTypeItems() =>
         Enum.GetValues<ContextFragmentType>()
             .Select(value => new SelectListItem(ContextFragmentTypeLabel(value), ((int)value).ToString()));
@@ -175,10 +184,10 @@ public static class AnalysisUiText
             ExpertConclusionType.NotSet => "Не выбрано",
             ExpertConclusionType.Accept => "Принять",
             ExpertConclusionType.AcceptWithLimitations => "Принять с ограничениями",
-            ExpertConclusionType.SendForClarification => "Отправить на уточнение",
-            ExpertConclusionType.SplitIntoSeveralTasks => "Разделить на несколько задач",
+            ExpertConclusionType.SendForClarification => "Требуется уточнение",
+            ExpertConclusionType.SplitIntoSeveralTasks => "Рекомендовать разделение на несколько задач",
             ExpertConclusionType.Reject => "Отклонить",
-            ExpertConclusionType.ReturnForReanalysis => "Вернуть на повторный анализ",
+            ExpertConclusionType.ReturnForReanalysis => "Рекомендовать повторный анализ",
             _ => type.ToString()
         };
 
