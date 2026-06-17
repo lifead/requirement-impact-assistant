@@ -95,6 +95,16 @@ public static class AnalysisUiText
             _ => mode.ToString()
         };
 
+    public static string AnalysisModeReviewDescription(AnalysisMode mode) =>
+        mode switch
+        {
+            AnalysisMode.DirectLlm =>
+                "Использует настроенный в приложении LLM provider без проверки внешнего AI/RAG-контура на этой странице.",
+            AnalysisMode.ExternalRag =>
+                "Может использовать mock fallback или внешний adapter в зависимости от конфигурации приложения; доступность фиксируется только при запуске анализа.",
+            _ => mode.ToString()
+        };
+
     public static string RetrievedContextStateLabel(RetrievedContextState state) =>
         state switch
         {

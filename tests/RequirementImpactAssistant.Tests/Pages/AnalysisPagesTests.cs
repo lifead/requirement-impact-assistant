@@ -296,12 +296,103 @@ public sealed class AnalysisPagesTests
         Assert.Contains("value=\"@nameof(AnalysisMode.ExternalRag)\"", source, StringComparison.Ordinal);
         Assert.Contains("? nameof(AnalysisMode.DirectLlm)", source, StringComparison.Ordinal);
         Assert.Contains(
-            "checked=\"@(selectedAnalysisMode == nameof(AnalysisMode.DirectLlm))\"",
+            "checked=\"@(selectedAnalysisMode == AnalysisMode.DirectLlm)\"",
             source,
             StringComparison.Ordinal);
-        Assert.Contains("External AI/RAG", source, StringComparison.Ordinal);
-        Assert.Contains("может передавать данные во внешний AI/RAG-контур", source, StringComparison.Ordinal);
-        Assert.Contains("может быть ограничен или недоступен", source, StringComparison.Ordinal);
+        Assert.Contains("Выбранный режим:", source, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.AnalysisModeLabel(AnalysisMode.DirectLlm)", source, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.AnalysisModeLabel(AnalysisMode.ExternalRag)", source, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.AnalysisModeReviewDescription(selectedAnalysisMode)", source, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.AnalysisModeReviewDescription(AnalysisMode.DirectLlm)", source, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.AnalysisModeReviewDescription(AnalysisMode.ExternalRag)", source, StringComparison.Ordinal);
+        Assert.Contains("не выполняет сетевую проверку", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReviewPage_ModeDescriptionsAreProviderNeutralAndDoNotMakeDirectModeLookBroken()
+    {
+        var directDescription = AnalysisUiText.AnalysisModeReviewDescription(AnalysisMode.DirectLlm);
+        var externalDescription = AnalysisUiText.AnalysisModeReviewDescription(AnalysisMode.ExternalRag);
+        var combinedDescription = directDescription + Environment.NewLine + externalDescription;
+
+        Assert.Contains("настроенный в приложении LLM provider", directDescription, StringComparison.Ordinal);
+        Assert.Contains("без проверки внешнего AI/RAG-контура", directDescription, StringComparison.Ordinal);
+        Assert.DoesNotContain("недоступ", directDescription, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("mock fallback", externalDescription, StringComparison.Ordinal);
+        Assert.Contains("внешний adapter", externalDescription, StringComparison.Ordinal);
+        Assert.Contains("только при запуске анализа", externalDescription, StringComparison.Ordinal);
+
+        Assert.All(
+            new[]
+            {
+                "Dify",
+                "DeepSeek",
+                "endpoint",
+                "api key",
+                "bearer",
+                "cookie",
+                "csrf",
+                "raw provider payload"
+            },
+            token => Assert.DoesNotContain(token, combinedDescription, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void ReviewPageModel_DependsOnlyOnApplicationExecutionBoundaryForAnalysisRun()
+    {
+        var constructorParameterTypes = typeof(ReviewModel)
+            .GetConstructors()
+            .SelectMany(constructor => constructor.GetParameters())
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        Assert.Contains(typeof(ApplicationDbContext), constructorParameterTypes);
+        Assert.Contains(typeof(IAnalysisExecutionService), constructorParameterTypes);
+
+        Assert.All(
+            new[]
+            {
+                "DifyExternalRagAdapter",
+                "DifyExternalRagOptions",
+                "IExternalRagAdapter",
+                "ILlmProvider",
+                "HttpClient"
+            },
+            forbiddenTypeName => Assert.DoesNotContain(
+                constructorParameterTypes,
+                parameterType => string.Equals(parameterType.Name, forbiddenTypeName, StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void ReviewPage_SourceDoesNotReferenceProviderAdaptersNetworkOrSecretBearingUi()
+    {
+        var combinedSource = string.Join(
+            Environment.NewLine,
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Review.cshtml"),
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Review.cshtml.cs"));
+
+        Assert.Contains("IAnalysisExecutionService", combinedSource, StringComparison.Ordinal);
+
+        Assert.All(
+            new[]
+            {
+                "DifyExternalRagAdapter",
+                "DifyExternalRagOptions",
+                "IExternalRagAdapter",
+                "ILlmProvider",
+                "HttpClient",
+                "DifyWorkflow",
+                "DifyAgent",
+                "Endpoint",
+                "ApiKey",
+                "Bearer",
+                "Cookie",
+                "CSRF",
+                "RawResponse",
+                "RawPayload",
+                "Authorization"
+            },
+            token => Assert.DoesNotContain(token, combinedSource, StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
