@@ -773,6 +773,7 @@ public sealed class AnalysisMarkdownExportServiceTests
         Assert.Contains("Retrieved context is unavailable for this saved analysis result.", markdown);
         Assert.Contains("No retrieved context items were saved.", markdown);
         Assert.Contains("## Input", markdown);
+        Assert.Contains("- **Project request type:** ApiOrIntegrationChange", markdown);
         Assert.Contains("**Original requirement:**", markdown);
         Assert.Contains("Change payment API response.", markdown);
         Assert.Contains("**Proposed change:**", markdown);
@@ -1130,6 +1131,7 @@ public sealed class AnalysisMarkdownExportServiceTests
             Id = analysisId,
             Title = "Payment API change",
             Status = AnalysisStatus.ExpertConclusionFixed,
+            ProjectRequestType = ProjectRequestType.ApiOrIntegrationChange,
             OriginalDescription = "Change payment API response.",
             ProjectRequest = "Add new status field to payment API response.",
             SituationDescription = "Several consumers parse the payment response.",
@@ -1183,6 +1185,7 @@ public sealed class AnalysisMarkdownExportServiceTests
             Id = analysisId,
             Title = "Saved mock external result",
             Status = AnalysisStatus.ReadyForAnalysis,
+            ProjectRequestType = ProjectRequestType.ApiOrIntegrationChange,
             OriginalDescription = "Change integration boundary for a saved mock external result.",
             ProjectRequest = "Assess the impact of a deterministic mock external change.",
             SituationDescription = "The project uses local demo context for reproducible analysis.",

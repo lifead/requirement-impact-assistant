@@ -10,6 +10,10 @@ public static class AnalysisUiText
         Enum.GetValues<ContextFragmentType>()
             .Select(value => new SelectListItem(ContextFragmentTypeLabel(value), ((int)value).ToString()));
 
+    public static IEnumerable<SelectListItem> ProjectRequestTypeItems() =>
+        Enum.GetValues<ProjectRequestType>()
+            .Select(value => new SelectListItem(ProjectRequestTypeLabel(value), ((int)value).ToString()));
+
     public static IEnumerable<SelectListItem> ExpertConclusionTypeItems() =>
         Enum.GetValues<ExpertConclusionType>()
             .Select(value => new SelectListItem(ExpertConclusionTypeLabel(value), ((int)value).ToString()));
@@ -117,6 +121,21 @@ public static class AnalysisUiText
             ContextFragmentType.ArchitecturalConstraint => "Архитектурное ограничение",
             ContextFragmentType.TestCase => "Тестовый сценарий",
             ContextFragmentType.PreviousDecision => "Ранее принятое решение",
+            _ => type.ToString()
+        };
+
+    public static string ProjectRequestTypeLabel(ProjectRequestType type) =>
+        type switch
+        {
+            ProjectRequestType.RequirementChange => "Изменение требования",
+            ProjectRequestType.NewFunctionality => "Новая функциональность",
+            ProjectRequestType.DefectFix => "Исправление дефекта",
+            ProjectRequestType.RequirementClarification => "Уточнение требования",
+            ProjectRequestType.ApiOrIntegrationChange => "Изменение API / интеграции",
+            ProjectRequestType.ArchitecturalConstraintChange => "Изменение архитектурного ограничения",
+            ProjectRequestType.ProjectDecisionChange => "Изменение проектного решения",
+            ProjectRequestType.UserScenarioChange => "Изменение пользовательского сценария",
+            ProjectRequestType.Other => "Другое",
             _ => type.ToString()
         };
 

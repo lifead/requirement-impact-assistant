@@ -98,6 +98,7 @@ public sealed class AnalysisPagesTests
                 Assert.Equal(analysis.Id, pageModel.Analysis.Id);
                 Assert.Equal("Gateway migration", pageModel.Analysis.Title);
                 Assert.Equal(AnalysisStatus.ReadyForAnalysis, pageModel.Analysis.Status);
+                Assert.Equal(ProjectRequestType.NewFunctionality, pageModel.Analysis.ProjectRequestType);
                 Assert.Equal("Original requirement for Gateway migration", pageModel.Analysis.OriginalDescription);
                 Assert.Equal("Project request for Gateway migration", pageModel.Analysis.ProjectRequest);
                 Assert.Equal("Situation for Gateway migration", pageModel.Analysis.SituationDescription);
@@ -226,6 +227,7 @@ public sealed class AnalysisPagesTests
                 Assert.Equal(analysis.Id, pageModel.Analysis.Id);
                 Assert.Equal("Gateway migration", pageModel.Analysis.Title);
                 Assert.Equal(AnalysisStatus.ReadyForAnalysis, pageModel.Analysis.Status);
+                Assert.Equal(ProjectRequestType.NewFunctionality, pageModel.Analysis.ProjectRequestType);
                 Assert.Equal("Original requirement for Gateway migration", pageModel.Analysis.OriginalDescription);
                 Assert.Equal("Project request for Gateway migration", pageModel.Analysis.ProjectRequest);
                 Assert.Equal("Situation for Gateway migration", pageModel.Analysis.SituationDescription);
@@ -1594,12 +1596,56 @@ public sealed class AnalysisPagesTests
 
                 Assert.Equal("Payment API change", analysis.Title);
                 Assert.Equal(AnalysisStatus.ReadyForAnalysis, analysis.Status);
+                Assert.Equal(ProjectRequestType.ApiOrIntegrationChange, analysis.ProjectRequestType);
                 Assert.Equal("Original requirement for Payment API change", analysis.OriginalDescription);
                 Assert.Equal("Project request for Payment API change", analysis.ProjectRequest);
                 Assert.Equal("Situation for Payment API change", analysis.SituationDescription);
                 Assert.Equal("Change source for Payment API change", analysis.ChangeSource);
                 Assert.NotEqual(default, analysis.CreatedAt);
                 Assert.Equal(analysis.CreatedAt, analysis.UpdatedAt);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task CreatePage_SavesExplicitOtherProjectRequestType()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+            }
+
+            Guid analysisId;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var input = CreateInput("Other request");
+                input.ProjectRequestType = ProjectRequestType.Other;
+                var pageModel = new CreateModel(dbContext)
+                {
+                    Input = input
+                };
+
+                var result = await pageModel.OnPostAsync();
+                var redirect = Assert.IsType<RedirectToPageResult>(result);
+                analysisId = Assert.IsType<Guid>(redirect.RouteValues?["id"]);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var analysis = await dbContext.Analyses.SingleAsync(candidate => candidate.Id == analysisId);
+
+                Assert.Equal(ProjectRequestType.Other, analysis.ProjectRequestType);
             }
         }
         finally
@@ -1626,7 +1672,7 @@ public sealed class AnalysisPagesTests
 
                 Assert.IsType<PageResult>(result);
                 Assert.False(pageModel.ModelState.IsValid);
-                Assert.Equal(5, pageModel.ModelState.ErrorCount);
+                Assert.Equal(6, pageModel.ModelState.ErrorCount);
                 Assert.Empty(await dbContext.Analyses.ToListAsync());
             }
         }
@@ -1673,6 +1719,7 @@ public sealed class AnalysisPagesTests
                 var updated = await dbContext.Analyses.SingleAsync(candidate => candidate.Id == analysis.Id);
 
                 Assert.Equal("Edited request", updated.Title);
+                Assert.Equal(ProjectRequestType.ApiOrIntegrationChange, updated.ProjectRequestType);
                 Assert.Equal("Original requirement for Edited request", updated.OriginalDescription);
                 Assert.Equal("Project request for Edited request", updated.ProjectRequest);
                 Assert.Equal("Situation for Edited request", updated.SituationDescription);
@@ -1714,7 +1761,7 @@ public sealed class AnalysisPagesTests
 
                 Assert.IsType<PageResult>(result);
                 Assert.False(pageModel.ModelState.IsValid);
-                Assert.Equal(5, pageModel.ModelState.ErrorCount);
+                Assert.Equal(6, pageModel.ModelState.ErrorCount);
             }
 
             await using (var dbContext = new ApplicationDbContext(options))
@@ -2571,6 +2618,7 @@ public sealed class AnalysisPagesTests
             Id = Guid.NewGuid(),
             Title = title,
             Status = status,
+            ProjectRequestType = ProjectRequestType.NewFunctionality,
             OriginalDescription = $"Original requirement for {title}",
             ProjectRequest = $"Project request for {title}",
             SituationDescription = $"Situation for {title}",
@@ -2584,6 +2632,7 @@ public sealed class AnalysisPagesTests
         new()
         {
             Title = title,
+            ProjectRequestType = ProjectRequestType.ApiOrIntegrationChange,
             OriginalDescription = $"Original requirement for {title}",
             ProjectRequest = $"Project request for {title}",
             SituationDescription = $"Situation for {title}",

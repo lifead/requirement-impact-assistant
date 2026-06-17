@@ -72,6 +72,9 @@ public sealed class AnalysisJsonExportServiceTests
                 "Change payment API response.",
                 document.RootElement.GetProperty("input").GetProperty("originalDescription").GetString());
             Assert.Equal(
+                "ApiOrIntegrationChange",
+                document.RootElement.GetProperty("input").GetProperty("projectRequestType").GetString());
+            Assert.Equal(
                 "Add new status field to payment API response.",
                 document.RootElement.GetProperty("input").GetProperty("proposedChange").GetString());
             Assert.Equal(
@@ -1487,6 +1490,7 @@ public sealed class AnalysisJsonExportServiceTests
             Id = analysisId,
             Title = "Payment API change",
             Status = AnalysisStatus.ExpertConclusionFixed,
+            ProjectRequestType = ProjectRequestType.ApiOrIntegrationChange,
             OriginalDescription = "Change payment API response.",
             ProjectRequest = "Add new status field to payment API response.",
             SituationDescription = "Several consumers parse the payment response.",
@@ -1531,6 +1535,7 @@ public sealed class AnalysisJsonExportServiceTests
             Id = analysisId,
             Title = "Saved mock external result",
             Status = AnalysisStatus.ReadyForAnalysis,
+            ProjectRequestType = ProjectRequestType.ApiOrIntegrationChange,
             OriginalDescription = "Change integration boundary for a saved mock external result.",
             ProjectRequest = "Assess the impact of a deterministic mock external change.",
             SituationDescription = "The project uses local demo context for reproducible analysis.",

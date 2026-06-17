@@ -17,6 +17,8 @@ public sealed class Analysis
 
     public AnalysisStatus Status { get; set; } = AnalysisStatus.Draft;
 
+    public ProjectRequestType ProjectRequestType { get; set; } = ProjectRequestType.Other;
+
     public string OriginalDescription { get; set; } = string.Empty;
 
     public string ProjectRequest { get; set; } = string.Empty;

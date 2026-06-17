@@ -73,6 +73,7 @@ public sealed class ApplicationDbContextPersistenceTests
 
                 Assert.Equal("Payment API change", loadedAnalysis.Title);
                 Assert.Equal(AnalysisStatus.NeedsExpertEvaluation, loadedAnalysis.Status);
+                Assert.Equal(ProjectRequestType.ApiOrIntegrationChange, loadedAnalysis.ProjectRequestType);
                 Assert.Equal("RFC-42", loadedAnalysis.ChangeSource);
 
                 var loadedFragment = Assert.Single(loadedAnalysis.ContextFragments);
@@ -467,6 +468,7 @@ public sealed class ApplicationDbContextPersistenceTests
                     .SingleAsync(item => item.Id == analysisId);
 
                 Assert.Equal("Legacy MVP-0 analysis", loadedAnalysis.Title);
+                Assert.Equal(ProjectRequestType.Other, loadedAnalysis.ProjectRequestType);
                 Assert.NotNull(loadedAnalysis.AiAnalysisResult);
 
                 var loadedResult = loadedAnalysis.AiAnalysisResult;
@@ -713,6 +715,7 @@ public sealed class ApplicationDbContextPersistenceTests
             Id = Guid.NewGuid(),
             Title = "Payment API change",
             Status = AnalysisStatus.NeedsExpertEvaluation,
+            ProjectRequestType = ProjectRequestType.ApiOrIntegrationChange,
             OriginalDescription = "Change payment API response.",
             ProjectRequest = "Add new status field to payment API response.",
             SituationDescription = "Several consumers parse the payment response.",

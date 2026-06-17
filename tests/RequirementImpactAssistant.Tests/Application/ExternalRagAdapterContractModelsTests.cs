@@ -205,6 +205,7 @@ public sealed class ExternalRagAdapterContractModelsTests
             AnalysisId: Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
             Analysis: new AnalysisInputFields(
                 Title: "Gateway migration",
+                ProjectRequestType: "ApiOrIntegrationChange",
                 OriginalDescription: "Original requirement",
                 ProjectRequest: "Project request",
                 SituationDescription: "Current situation",

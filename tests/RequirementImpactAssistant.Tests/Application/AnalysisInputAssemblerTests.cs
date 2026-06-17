@@ -38,7 +38,7 @@ public sealed class AnalysisInputAssemblerTests
         var request = new AnalysisInputAssembler().Assemble(analysis);
 
         Assert.Equal(
-            "{\"analysisId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\",\"analysis\":{\"title\":\"Gateway migration\",\"originalDescription\":\"Original requirement\",\"projectRequest\":\"Project request\",\"situationDescription\":\"Current situation\",\"changeSource\":\"Change source\"},\"contextFragments\":[{\"id\":\"11111111-1111-1111-1111-111111111111\",\"type\":\"Task\",\"source\":\"Task tracker\",\"text\":\"Task context.\",\"fileName\":null},{\"id\":\"22222222-2222-2222-2222-222222222222\",\"type\":\"ApiDescription\",\"source\":\"API notes\",\"text\":\"Endpoint contract.\",\"fileName\":\"api.md\"}]}",
+            "{\"analysisId\":\"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\",\"analysis\":{\"title\":\"Gateway migration\",\"projectRequestType\":\"ApiOrIntegrationChange\",\"originalDescription\":\"Original requirement\",\"projectRequest\":\"Project request\",\"situationDescription\":\"Current situation\",\"changeSource\":\"Change source\"},\"contextFragments\":[{\"id\":\"11111111-1111-1111-1111-111111111111\",\"type\":\"Task\",\"source\":\"Task tracker\",\"text\":\"Task context.\",\"fileName\":null},{\"id\":\"22222222-2222-2222-2222-222222222222\",\"type\":\"ApiDescription\",\"source\":\"API notes\",\"text\":\"Endpoint contract.\",\"fileName\":\"api.md\"}]}",
             request.InputSnapshotJson);
         Assert.Equal(request.InputSnapshotJson, new AnalysisInputAssembler().Assemble(analysis).InputSnapshotJson);
         Assert.True(request.BoundaryNotice.IsPreliminaryAnalyticalMaterial);
@@ -197,6 +197,7 @@ public sealed class AnalysisInputAssemblerTests
         {
             Id = analysisId,
             Title = "Gateway migration",
+            ProjectRequestType = ProjectRequestType.ApiOrIntegrationChange,
             Status = AnalysisStatus.ReadyForAnalysis,
             OriginalDescription = "Original requirement",
             ProjectRequest = "Project request",

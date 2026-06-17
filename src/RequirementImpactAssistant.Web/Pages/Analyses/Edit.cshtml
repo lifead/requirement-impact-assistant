@@ -24,6 +24,16 @@
         </div>
 
         <div>
+            <label asp-for="Input.ProjectRequestType" class="form-label">Тип проектного запроса</label>
+            <select asp-for="Input.ProjectRequestType"
+                    asp-items="AnalysisUiText.ProjectRequestTypeItems()"
+                    class="form-select">
+                <option value="">Выберите тип проектного запроса</option>
+            </select>
+            <span asp-validation-for="Input.ProjectRequestType" class="text-danger"></span>
+        </div>
+
+        <div>
             <label asp-for="Input.OriginalDescription" class="form-label">Исходное описание</label>
             <textarea asp-for="Input.OriginalDescription" class="form-control" rows="4"></textarea>
             <span asp-validation-for="Input.OriginalDescription" class="text-danger"></span>

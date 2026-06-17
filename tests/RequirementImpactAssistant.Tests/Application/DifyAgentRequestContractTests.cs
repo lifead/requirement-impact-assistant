@@ -62,6 +62,7 @@ public sealed class DifyAgentRequestContractTests
             AnalysisId: Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
             Analysis: new AnalysisInputFields(
                 Title: "Demo analysis",
+                ProjectRequestType: "ApiOrIntegrationChange",
                 OriginalDescription: "Original requirement text",
                 ProjectRequest: "Analyze the requested change.",
                 SituationDescription: "Situation text",

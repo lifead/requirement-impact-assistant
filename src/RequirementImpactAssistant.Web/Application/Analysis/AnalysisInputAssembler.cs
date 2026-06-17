@@ -16,6 +16,7 @@ public sealed class AnalysisInputAssembler : IAnalysisInputAssembler
             AnalysisId: analysis.Id,
             Analysis: new AnalysisInputFields(
                 Title: analysis.Title,
+                ProjectRequestType: analysis.ProjectRequestType.ToString(),
                 OriginalDescription: analysis.OriginalDescription,
                 ProjectRequest: analysis.ProjectRequest,
                 SituationDescription: analysis.SituationDescription,

@@ -182,6 +182,7 @@ public sealed class DeepSeekLlmProviderTests
             AnalysisId: Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
             Analysis: new AnalysisInputFields(
                 Title: "Gateway migration",
+                ProjectRequestType: "ApiOrIntegrationChange",
                 OriginalDescription: "Original requirement for authentication gateway.",
                 ProjectRequest: "Move the gateway authentication flow to the new service.",
                 SituationDescription: "Current gateway is shared by several integrations.",
