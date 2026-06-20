@@ -17,8 +17,11 @@
 
         <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
             <div>
-                <h1 class="h2 mb-2">Экспертная оценка</h1>
-                <p class="text-muted mb-0">@Model.Analysis.Title</p>
+                <h1 class="h2 mb-2">Экспертная оценка человеком</h1>
+                <p class="text-muted mb-0">
+                    @Model.Analysis.Title
+                    <span class="d-block mt-1">На этой странице эксперт проверяет предварительный AI/LLM-материал. Здесь не запускается повторный анализ и не фиксируется управленческое решение.</span>
+                </p>
             </div>
             <div class="d-flex align-items-center gap-2">
                 <span class="badge text-bg-secondary">@AnalysisUiText.AnalysisStatusLabel(Model.Analysis.Status)</span>
@@ -35,11 +38,26 @@
             var contextSummary = Model.Analysis.ContextSummary;
         }
 
-        <section class="border rounded p-3 mb-4" aria-labelledby="expert-evaluation-context-heading">
+        <section class="border rounded p-3 mb-4 bg-light" aria-labelledby="expert-evaluation-context-heading">
             <div class="mb-3">
-                <h2 id="expert-evaluation-context-heading" class="h4 mb-2">Контекст для экспертной оценки</h2>
+                <div class="d-flex align-items-start justify-content-between gap-3">
+                    <div>
+                        <h2 id="expert-evaluation-context-heading" class="h4 mb-2">Материал для проверки</h2>
+                        <p class="text-muted mb-0">
+                            Это обзор сохраненных входных данных, предварительной карты влияния и ограничений результата. Он помогает эксперту проверить материал, но сам не является экспертной оценкой.
+                        </p>
+                    </div>
+                    <span class="badge text-bg-secondary">Только просмотр</span>
+                </div>
+            </div>
+
+            <div class="alert alert-secondary" role="status">
+                Раздел ниже отделен от полей оценки: он показывает, что уже сформировано AI/LLM-контуром, и не меняется при сохранении экспертной оценки.
+            </div>
+
+            <div class="mb-3">
                 <p class="text-muted mb-0">
-                    Сводка ниже построена только из сохраненного результата анализа и входных данных карточки. Она не запускает повторный анализ и не является экспертной оценкой.
+                    Сводка построена только из сохраненного результата анализа и входных данных карточки. Повторный анализ на этой странице не выполняется.
                 </p>
             </div>
 
@@ -68,12 +86,12 @@
 
                 <div class="col-lg-6">
                     <section class="h-100">
-                        <h3 class="h5 mb-3">Основания и ограничения</h3>
+                        <h3 class="h5 mb-3">Как был получен материал</h3>
                         <dl class="row mb-0">
                             <dt class="col-sm-5">Режим анализа</dt>
                             <dd class="col-sm-7">@AnalysisUiText.AnalysisModeLabel(contextSummary.AnalysisMode)</dd>
 
-                            <dt class="col-sm-5">Retrieved context state</dt>
+                            <dt class="col-sm-5">Состояние извлеченного контекста</dt>
                             <dd class="col-sm-7">@AnalysisUiText.RetrievedContextStateLabel(contextSummary.RetrievedContextState)</dd>
 
                             <dt class="col-sm-5">Пояснение</dt>
@@ -85,7 +103,7 @@
                             <dt class="col-sm-5">Предупреждения</dt>
                             <dd class="col-sm-7">@contextSummary.Warnings.Count</dd>
 
-                            <dt class="col-sm-5">Limitation notes</dt>
+                            <dt class="col-sm-5">Ограничения</dt>
                             <dd class="col-sm-7">@contextSummary.LimitationNoteCount</dd>
 
                             @if (!string.IsNullOrWhiteSpace(contextSummary.EngineName))
@@ -96,13 +114,13 @@
 
                             @if (!string.IsNullOrWhiteSpace(contextSummary.ProviderName))
                             {
-                                <dt class="col-sm-5">Provider</dt>
+                                <dt class="col-sm-5">Провайдер</dt>
                                 <dd class="col-sm-7">@contextSummary.ProviderName</dd>
                             }
 
                             @if (!string.IsNullOrWhiteSpace(contextSummary.AdapterName))
                             {
-                                <dt class="col-sm-5">Adapter</dt>
+                                <dt class="col-sm-5">Адаптер</dt>
                                 <dd class="col-sm-7">@contextSummary.AdapterName</dd>
                             }
 
@@ -119,12 +137,12 @@
             <section class="border-top pt-3 mt-3">
                 <div class="d-flex align-items-start justify-content-between gap-3 mb-3">
                     <div>
-                        <h3 class="h5 mb-1">Preliminary impact map</h3>
+                        <h3 class="h5 mb-1">Предварительная карта влияния</h3>
                         <p class="text-muted mb-0">
-                            Сохраненная карта влияния содержит @contextSummary.ImpactItemCount элементов и используется как preliminary analytical material.
+                            Сохраненная карта содержит @contextSummary.ImpactItemCount элементов. Это предварительный аналитический материал для проверки человеком.
                         </p>
                     </div>
-                    <span class="badge text-bg-secondary">Read-only</span>
+                    <span class="badge text-bg-secondary">Только просмотр</span>
                 </div>
 
                 <div class="row g-3">
@@ -148,19 +166,19 @@
             </section>
 
             <section class="border-top pt-3 mt-3">
-                <h3 class="h5 mb-3">Retrieved context</h3>
+                <h3 class="h5 mb-3">Извлеченный контекст</h3>
                 @if (contextSummary.RetrievedContextItems.Count == 0)
                 {
                     @if (contextSummary.IsDirectLlmWithoutRetrievedContext)
                     {
                         <div class="alert alert-info mb-0" role="status">
-                            Для режима Direct LLM отдельный retrieved context не создается и не подменяется искусственными источниками.
+                            Для режима Direct LLM отдельный извлеченный контекст не создается и не подменяется искусственными источниками.
                         </div>
                     }
                     else
                     {
                         <div class="alert alert-warning mb-0" role="status">
-                            Сохраненных элементов retrieved context нет; эксперт видит только состояние @AnalysisUiText.RetrievedContextStateLabel(contextSummary.RetrievedContextState).
+                            Сохраненных элементов извлеченного контекста нет; эксперт видит только состояние @AnalysisUiText.RetrievedContextStateLabel(contextSummary.RetrievedContextState).
                         </div>
                     }
                 }
@@ -171,10 +189,10 @@
                             <thead>
                                 <tr>
                                     <th scope="col">Источник</th>
-                                    <th scope="col">Completeness</th>
-                                    <th scope="col">Rank/score</th>
-                                    <th scope="col">Reference</th>
-                                    <th scope="col">Limitation</th>
+                                    <th scope="col">Полнота</th>
+                                    <th scope="col">Ранг/оценка</th>
+                                    <th scope="col">Ссылка или указание</th>
+                                    <th scope="col">Ограничение</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -213,7 +231,7 @@
             @if (contextSummary.HasWarningsOrLimitations)
             {
                 <section class="border-top pt-3 mt-3">
-                    <h3 class="h5 mb-3">Warnings / limitations</h3>
+                    <h3 class="h5 mb-3">Предупреждения и ограничения</h3>
                     @if (contextSummary.Warnings.Count > 0)
                     {
                         <div class="alert alert-warning" role="status">
@@ -245,8 +263,14 @@
         <form method="post" class="d-grid gap-4">
             <div asp-validation-summary="ModelOnly" class="text-danger"></div>
 
-            <section>
-                <h2 class="h4 mb-3">Оценки элементов карты влияния</h2>
+            <section aria-labelledby="human-expert-evaluation-heading">
+                <div class="mb-3">
+                    <span class="badge text-bg-success mb-2">Human evaluation</span>
+                    <h2 id="human-expert-evaluation-heading" class="h4 mb-2">Оценка предварительного материала экспертом</h2>
+                    <p class="text-muted mb-0">
+                        Заполните, что эксперт подтверждает, исправляет или считает недостаточно обоснованным. Эта форма сохраняет человеческую оценку материала, а не итоговое экспертное заключение.
+                    </p>
+                </div>
 
                 @{
                     var itemIndex = 0;
@@ -269,10 +293,10 @@
                                         <thead>
                                             <tr>
                                                 <th scope="col">Элемент</th>
-                                                <th scope="col">Результат AI</th>
-                                                <th scope="col">Оценка</th>
-                                                <th scope="col">Комментарий</th>
-                                                <th scope="col">Текст исправления</th>
+                                                <th scope="col">Предварительный материал</th>
+                                                <th scope="col">Оценка эксперта</th>
+                                                <th scope="col">Комментарий эксперта</th>
+                                                <th scope="col">Исправление эксперта</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -323,7 +347,10 @@
             </section>
 
             <section class="border-top pt-4">
-                <h2 class="h4 mb-3">Пропущенные элементы</h2>
+                <div class="mb-3">
+                    <h2 class="h4 mb-2">Что эксперт добавляет к карте</h2>
+                    <p class="text-muted mb-0">Укажите элементы, которые отсутствуют в предварительной карте влияния, но важны для экспертной проверки.</p>
+                </div>
                 <div class="table-responsive">
                     <table class="table table-sm align-middle">
                         <thead>
@@ -368,7 +395,10 @@
             </section>
 
             <section class="border-top pt-4">
-                <h2 class="h4 mb-3">Дополнительные исправления</h2>
+                <div class="mb-3">
+                    <h2 class="h4 mb-2">Дополнительные исправления эксперта</h2>
+                    <p class="text-muted mb-0">Зафиксируйте правки к уже найденным элементам, если одной оценки и комментария недостаточно.</p>
+                </div>
                 <div class="table-responsive">
                     <table class="table table-sm align-middle">
                         <thead>
@@ -413,7 +443,10 @@
             </section>
 
             <section class="border-top pt-4">
-                <h2 class="h4 mb-3">Общие оценки</h2>
+                <div class="mb-3">
+                    <h2 class="h4 mb-2">Общая оценка материала</h2>
+                    <p class="text-muted mb-0">Эти поля описывают пригодность контекста и предварительного результата для дальнейшей человеческой работы.</p>
+                </div>
                 <div class="row g-3">
                     <div class="col-md-6">
                         <label asp-for="Input.ContextSufficiency" class="form-label">Достаточность контекста</label>
@@ -430,7 +463,7 @@
                 </div>
 
                 <div class="mt-3">
-                    <label asp-for="Input.GeneralComment" class="form-label">Общий комментарий</label>
+                    <label asp-for="Input.GeneralComment" class="form-label">Общий комментарий эксперта</label>
                     <textarea asp-for="Input.GeneralComment" class="form-control" rows="4"></textarea>
                 </div>
             </section>
