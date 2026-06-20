@@ -3,8 +3,8 @@
 @using RequirementImpactAssistant.Web.Domain.Enums
 @{
     ViewData["Title"] = Model.Analysis is null
-        ? "Проверка исходных данных анализа"
-        : $"Проверка ввода: {Model.Analysis.Title}";
+        ? "Проверка перед анализом"
+        : $"Проверка перед анализом: {Model.Analysis.Title}";
     var selectedAnalysisModeName = string.IsNullOrWhiteSpace(Model.Input.AnalysisMode)
         ? nameof(AnalysisMode.DirectLlm)
         : Model.Input.AnalysisMode.Trim();
@@ -22,14 +22,15 @@
 
         <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
             <div>
-                <h1 class="h2 mb-2">Проверка исходных данных перед LLM-анализом</h1>
+                <h1 class="h2 mb-2">Проверка перед запуском предварительного анализа</h1>
                 <p class="text-muted mb-0">@Model.Analysis.Title</p>
             </div>
             <span class="badge text-bg-secondary">@AnalysisUiText.AnalysisStatusLabel(Model.Analysis.Status)</span>
         </div>
 
         <div class="alert alert-info" role="status">
-            Качество будущего интеллектуального анализа зависит от полноты проектного контекста.
+            Проверьте входные данные и контекст, добавленный человеком, перед запуском предварительного анализа.
+            Экспертная оценка и заключение выполняются после получения предварительного результата.
         </div>
 
         <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
@@ -37,7 +38,7 @@
         @if (Model.Analysis.HasMinimumInput)
         {
             <div class="alert alert-success" role="status">
-                Минимальные поля анализа заполнены. Анализ можно продолжить без дополнительных фрагментов контекста.
+                Минимальные поля заполнены. Перед запуском проверьте проектное изменение, текущее состояние и ручной контекст.
             </div>
 
             <form method="post"
@@ -45,7 +46,7 @@
                   asp-route-id="@Model.Analysis.Id"
                   class="mb-4">
                 <fieldset class="mb-3">
-                    <legend class="h5 mb-3">Режим предварительного анализа</legend>
+                    <legend class="h5 mb-3">Как запускать предварительный анализ</legend>
 
                     <div class="alert alert-secondary mb-3" role="status">
                         <div class="fw-semibold">
@@ -96,9 +97,14 @@
         else
         {
             <div class="alert alert-warning" role="status">
-                Минимальные поля анализа заполнены не полностью. Заполните исходные поля перед продолжением анализа.
+                Минимальные поля заполнены не полностью. Заполните исходные данные перед запуском предварительного анализа.
             </div>
         }
+
+        <div class="mb-3">
+            <h2 class="h4 mb-2">Входные данные для проверки</h2>
+            <p class="text-muted mb-0">Эти сведения задают проектный запрос и используются как основа предварительного анализа.</p>
+        </div>
 
         <dl class="row">
             <dt class="col-sm-3">Идентификатор</dt>
@@ -138,8 +144,8 @@
 
     <section class="py-4 border-top">
         <div class="mb-4">
-            <h2 class="h4 mb-2">Контекст, подготовленный для анализа</h2>
-            <p class="text-muted mb-0">Состав вручную добавленных и загруженных фрагментов контекста.</p>
+            <h2 class="h4 mb-2">Ручной контекст для проверки</h2>
+            <p class="text-muted mb-0">Фрагменты, добавленные человеком к этому анализу перед запуском предварительного анализа.</p>
         </div>
 
         @if (Model.Analysis.ContextFragments.Count == 0)
