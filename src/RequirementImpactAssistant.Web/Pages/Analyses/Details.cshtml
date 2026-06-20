@@ -15,7 +15,7 @@
         <div class="d-flex align-items-start justify-content-between gap-3 mb-4">
             <div>
                 <h1 class="h2 mb-2">@Model.Analysis.Title</h1>
-                <p class="text-muted mb-0">Обзор сохраненного анализа.</p>
+                <p class="text-muted mb-0">Обзор сохраненного анализа: входные данные, предварительный материал AI, человеческая проверка, заключение и сохраненный export.</p>
             </div>
             <div class="d-flex align-items-center gap-2">
                 <span class="badge text-bg-secondary">@AnalysisUiText.AnalysisStatusLabel(Model.Analysis.Status)</span>
@@ -69,8 +69,8 @@
 
         <section class="border rounded p-3 mb-4" aria-labelledby="details-status-summary-heading">
             <div class="mb-3">
-                <h2 id="details-status-summary-heading" class="h5 mb-1">Сценарий анализа</h2>
-                <p class="text-muted mb-0">Пассивная карта сохраненного материала и доступных переходов.</p>
+                <h2 id="details-status-summary-heading" class="h5 mb-1">Карта сохраненного анализа</h2>
+                <p class="text-muted mb-0">Сводка показывает, какие части анализа уже сохранены и какое человеческое действие логически остается следующим.</p>
             </div>
 
             <div class="row g-3">
@@ -113,10 +113,62 @@
             </div>
         </section>
 
+        <section class="mb-4" aria-labelledby="details-layers-heading">
+            <div class="mb-3">
+                <h2 id="details-layers-heading" class="h5 mb-1">Смысловые слои</h2>
+                <p class="text-muted mb-0">Разделы ниже отделяют исходные данные, предварительный AI-материал, человеческие действия, контекст, export и диагностику.</p>
+            </div>
+
+            <div class="row g-3">
+                <div class="col-md-6 col-xl-4">
+                    <a class="d-block h-100 border rounded p-3 text-decoration-none text-body" href="#analysis-input">
+                        <span class="badge text-bg-primary mb-2">Input</span>
+                        <h3 class="h6">Входные данные</h3>
+                        <p class="text-muted small mb-0">Что анализируется и какой запрос сохранен пользователем.</p>
+                    </a>
+                </div>
+                <div class="col-md-6 col-xl-4">
+                    <a class="d-block h-100 border rounded p-3 text-decoration-none text-body" href="#preliminary-result">
+                        <span class="badge text-bg-secondary mb-2">Preliminary</span>
+                        <h3 class="h6">Предварительный материал</h3>
+                        <p class="text-muted small mb-0">AI-result и карта влияния как материал для проверки человеком.</p>
+                    </a>
+                </div>
+                <div class="col-md-6 col-xl-4">
+                    <a class="d-block h-100 border rounded p-3 text-decoration-none text-body" href="#expert-evaluation">
+                        <span class="badge text-bg-success mb-2">Human</span>
+                        <h3 class="h6">Экспертная работа</h3>
+                        <p class="text-muted small mb-0">Оценка preliminary material и отдельное экспертное заключение.</p>
+                    </a>
+                </div>
+                <div class="col-md-6 col-xl-4">
+                    <a class="d-block h-100 border rounded p-3 text-decoration-none text-body" href="#manual-context">
+                        <span class="badge text-bg-light text-dark mb-2">Manual context</span>
+                        <h3 class="h6">Контекст пользователя</h3>
+                        <p class="text-muted small mb-0">Материалы, явно добавленные человеком в карточку анализа.</p>
+                    </a>
+                </div>
+                <div class="col-md-6 col-xl-4">
+                    <a class="d-block h-100 border rounded p-3 text-decoration-none text-body" href="#retrieved-context">
+                        <span class="badge text-bg-light text-dark mb-2">Retrieved context</span>
+                        <h3 class="h6">Контекст external AI/RAG</h3>
+                        <p class="text-muted small mb-0">Фрагменты или metadata, сохраненные от внешнего AI/RAG-контура.</p>
+                    </a>
+                </div>
+                <div class="col-md-6 col-xl-4">
+                    <a class="d-block h-100 border rounded p-3 text-decoration-none text-body" href="#diagnostics">
+                        <span class="badge text-bg-warning mb-2">Diagnostics</span>
+                        <h3 class="h6">Диагностика</h3>
+                        <p class="text-muted small mb-0">Raw response, ошибки и снимок входа для проверки MVP.</p>
+                    </a>
+                </div>
+            </div>
+        </section>
+
         <section id="analysis-input" class="pt-2">
             <div class="mb-3">
                 <h2 class="h4 mb-2">Входные данные</h2>
-                <p class="text-muted mb-0">Сохраненный пользовательский ввод для этого анализа.</p>
+                <p class="text-muted mb-0">Сохраненный пользовательский ввод: текущее состояние, проектное изменение, причина и источник изменения.</p>
             </div>
 
         <dl class="row">
@@ -150,40 +202,10 @@
         </section>
     </section>
 
-    <section id="expert-conclusion" class="py-4 border-top">
-        <div class="mb-4">
-            <h2 class="h4 mb-2">Экспертное заключение</h2>
-            <p class="text-muted mb-0">Итоговое заключение, зафиксированное экспертом-человеком.</p>
-        </div>
-
-        @if (Model.Analysis.ExpertConclusion is null)
-        {
-            <div class="border rounded p-4 bg-light">
-                <p class="mb-0">Экспертное заключение еще не зафиксировано.</p>
-            </div>
-        }
-        else
-        {
-            <dl class="row">
-                <dt class="col-sm-3">Тип</dt>
-                <dd class="col-sm-9">@AnalysisUiText.ExpertConclusionTypeLabel(Model.Analysis.ExpertConclusion.ConclusionType)</dd>
-
-                <dt class="col-sm-3">Зафиксировано</dt>
-                <dd class="col-sm-9">@(Model.Analysis.ExpertConclusion.FixedAt?.ToLocalTime().ToString("g") ?? "Не зафиксировано")</dd>
-
-                <dt class="col-sm-3">Комментарий</dt>
-                <dd class="col-sm-9">@Model.Analysis.ExpertConclusion.Comment</dd>
-
-                <dt class="col-sm-3">Обоснование</dt>
-                <dd class="col-sm-9">@Model.Analysis.ExpertConclusion.Rationale</dd>
-            </dl>
-        }
-    </section>
-
     <section id="preliminary-result" class="py-4 border-top">
         <div class="mb-4">
             <h2 class="h4 mb-2">Предварительный результат AI-анализа</h2>
-            <p class="text-muted mb-0">Этот материал является предварительным аналитическим материалом для экспертного рассмотрения человеком и не является управленческим решением.</p>
+            <p class="text-muted mb-0">AI/RAG/LLM формирует предварительный аналитический материал. Он требует человеческой проверки и не является экспертным заключением или управленческим решением.</p>
         </div>
 
         @if (Model.Analysis.AiAnalysisResult is null)
@@ -214,7 +236,10 @@
             </dl>
 
             <section class="mb-4">
-                <h3 class="h5 mb-3">Метаданные результата</h3>
+                <h3 class="h5 mb-3">Служебная сводка результата</h3>
+                <p class="text-muted mb-3">
+                    Эти сведения помогают понять режим анализа и воспроизводимость результата, но не заменяют карту влияния, экспертную оценку или экспертное заключение.
+                </p>
 
                 <dl class="row">
                     <dt class="col-sm-3">Режим анализа</dt>
@@ -266,16 +291,16 @@
             </section>
 
             <section id="grounds-limitations" class="mb-4">
-                <h3 class="h5 mb-3">Основания и ограничения</h3>
+                <h3 class="h5 mb-3">Основания и ограничения preliminary result</h3>
                 <p class="text-muted mb-3">
-                    Сводка показывает режим анализа, metadata результата и ограничения воспроизводимости; manual context и retrieved context показаны в отдельных разделах.
+                    Этот блок объясняет границы предварительного результата. Manual context и retrieved context показаны в отдельных разделах, чтобы не смешивать происхождение контекста.
                 </p>
 
                 <dl class="row">
                     <dt class="col-sm-3">Режим анализа</dt>
                     <dd class="col-sm-9">@AnalysisUiText.AnalysisModeLabel(aiResult.Metadata.AnalysisMode)</dd>
 
-                    <dt class="col-sm-3">Retrieved context state</dt>
+                    <dt class="col-sm-3">Состояние retrieved context</dt>
                     <dd class="col-sm-9">@AnalysisUiText.RetrievedContextStateLabel(aiResult.Metadata.RetrievedContextState)</dd>
 
                     <dt class="col-sm-3">Ограничение</dt>
@@ -286,7 +311,7 @@
             @if (aiResult.ImpactMap is null)
             {
                 <div class="alert alert-warning" role="status">
-                    Для этого результата не сохранена структурированная карта влияния. Проверьте предупреждения, ограничения, диагностику и исходный ответ ниже.
+                    Для этого результата не сохранена структурированная карта влияния. Проверьте предупреждения, ограничения и диагностический раздел ниже.
                 </div>
             }
             else
@@ -398,24 +423,6 @@
                     </div>
                 </section>
             }
-
-            @if (!string.IsNullOrWhiteSpace(aiResult.ErrorMessage))
-            {
-                <div class="mt-4">
-                    <h3 class="h5">Диагностика</h3>
-                    <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.ErrorMessage</pre>
-                </div>
-            }
-
-            <div class="mt-4">
-                <h3 class="h5">Исходный ответ</h3>
-                <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.RawResponse</pre>
-            </div>
-
-            <div class="mt-4">
-                <h3 class="h5">Снимок входных данных</h3>
-                <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.InputSnapshot</pre>
-            </div>
         }
     </section>
 
@@ -423,7 +430,7 @@
         <div class="mb-4">
             <h2 class="h4 mb-2">Retrieved context внешнего AI/RAG</h2>
             <p class="text-muted mb-0">
-                RAG knowledge base остается внешней базой provider-а. В приложении сохраняются только фрагменты или metadata, которые provider вернул для конкретного анализа.
+                RAG knowledge base остается внешней базой provider-а. В приложении сохраняются только фрагменты или metadata, которые provider вернул для конкретного анализа. Retrieved context не является экспертным доказательством сам по себе.
             </p>
         </div>
 
@@ -552,7 +559,7 @@
     <section id="expert-evaluation" class="py-4 border-top">
         <div class="mb-4">
             <h2 class="h4 mb-2">Экспертная оценка</h2>
-            <p class="text-muted mb-0">Человеческая проверка предварительного результата.</p>
+            <p class="text-muted mb-0">Человеческая проверка preliminary AI material: что эксперт подтвердил, исправил, дополнил или счел недостаточно обоснованным.</p>
         </div>
 
         <div class="border rounded p-4 bg-light">
@@ -564,10 +571,40 @@
         </div>
     </section>
 
+    <section id="expert-conclusion" class="py-4 border-top">
+        <div class="mb-4">
+            <h2 class="h4 mb-2">Экспертное заключение</h2>
+            <p class="text-muted mb-0">Итоговое человеческое заключение отдельно от preliminary AI material и экспертной оценки элементов.</p>
+        </div>
+
+        @if (Model.Analysis.ExpertConclusion is null)
+        {
+            <div class="border rounded p-4 bg-light">
+                <p class="mb-0">Экспертное заключение еще не зафиксировано.</p>
+            </div>
+        }
+        else
+        {
+            <dl class="row">
+                <dt class="col-sm-3">Тип</dt>
+                <dd class="col-sm-9">@AnalysisUiText.ExpertConclusionTypeLabel(Model.Analysis.ExpertConclusion.ConclusionType)</dd>
+
+                <dt class="col-sm-3">Зафиксировано</dt>
+                <dd class="col-sm-9">@(Model.Analysis.ExpertConclusion.FixedAt?.ToLocalTime().ToString("g") ?? "Не зафиксировано")</dd>
+
+                <dt class="col-sm-3">Комментарий</dt>
+                <dd class="col-sm-9">@Model.Analysis.ExpertConclusion.Comment</dd>
+
+                <dt class="col-sm-3">Обоснование</dt>
+                <dd class="col-sm-9">@Model.Analysis.ExpertConclusion.Rationale</dd>
+            </dl>
+        }
+    </section>
+
     <section id="export" class="py-4 border-top">
         <div class="mb-4">
             <h2 class="h4 mb-2">Экспорт</h2>
-            <p class="text-muted mb-0">Выгрузка сохраненного артефакта через существующие Markdown/JSON действия.</p>
+            <p class="text-muted mb-0">Выгрузка сохраненного Markdown/JSON результата через существующие действия. Export не запускает повторный AI/RAG/LLM-анализ.</p>
         </div>
 
         @if (Model.Analysis.ExpertConclusion is null)
@@ -595,7 +632,7 @@
 
     <section id="manual-context" class="py-4 border-top">
         <div class="mb-4">
-            <h2 class="h4 mb-2">Manual context карточки анализа</h2>
+            <h2 class="h4 mb-2">Manual context пользователя</h2>
             <p class="text-muted mb-0">
                 Это материалы, введенные пользователем в карточке анализа. Они не являются retrieved context и не представляют внешнюю RAG knowledge base provider-а.
             </p>
@@ -671,6 +708,44 @@
                         }
                     </tbody>
                 </table>
+            </div>
+        }
+    </section>
+
+    <section id="diagnostics" class="py-4 border-top">
+        <div class="mb-4">
+            <h2 class="h4 mb-2">Диагностика и raw data</h2>
+            <p class="text-muted mb-0">
+                Вспомогательные сведения для проверки корректности MVP. Они не являются основным пользовательским маршрутом, preliminary result или экспертным заключением.
+            </p>
+        </div>
+
+        @if (Model.Analysis.AiAnalysisResult is null)
+        {
+            <div class="border rounded p-4 bg-light">
+                <p class="mb-0">Диагностические данные AI-result будут доступны после формирования предварительного результата.</p>
+            </div>
+        }
+        else
+        {
+            var aiResult = Model.Analysis.AiAnalysisResult;
+
+            @if (!string.IsNullOrWhiteSpace(aiResult.ErrorMessage))
+            {
+                <div class="mb-4">
+                    <h3 class="h5">Ошибка или diagnostic message</h3>
+                    <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.ErrorMessage</pre>
+                </div>
+            }
+
+            <div class="mb-4">
+                <h3 class="h5">Исходный ответ</h3>
+                <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.RawResponse</pre>
+            </div>
+
+            <div>
+                <h3 class="h5">Снимок входных данных</h3>
+                <pre class="border rounded bg-light p-3 text-break white-space-pre-wrap">@aiResult.InputSnapshot</pre>
             </div>
         }
     </section>
