@@ -58,3 +58,8 @@
 - **RAG и внешние AI/RAG-движки добавляются только по отдельному решению.** Не добавлять RAG, embeddings, rerank, Dify-интеграцию, agentic workflow или аналоги без явной команды пользователя.
 - **MVP не должен разрастаться в Jira/Confluence/ALM/RAG/workflow-платформу.** Ограничения MVP не должны закрывать будущие точки расширения.
 - **Экспертное решение отделяется от результата LLM/AI.** LLM/AI/RAG формирует предварительный аналитический материал; экспертное решение или заключение фиксирует человек.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
