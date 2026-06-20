@@ -8,7 +8,7 @@
     <div class="d-flex align-items-center justify-content-between gap-3 mb-4">
         <div>
             <h1 class="h2 mb-1">Сохраненные анализы</h1>
-            <p class="text-muted mb-0">Список сохраненных материалов анализа.</p>
+            <p class="text-muted mb-0">Список сохраненных материалов анализа. Проверьте входные данные или откройте сохраненный обзор.</p>
         </div>
         <a class="btn btn-primary" asp-page="/Analyses/Create">Новый анализ</a>
     </div>
@@ -28,7 +28,7 @@
                         <th scope="col">Название</th>
                         <th scope="col">Статус</th>
                         <th scope="col">Обновлено</th>
-                        <th scope="col" class="text-end">Открыть</th>
+                        <th scope="col" class="text-end">Действия</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -39,16 +39,24 @@
                             <td>@AnalysisUiText.AnalysisStatusLabel(analysis.Status)</td>
                             <td>@analysis.UpdatedAt.ToLocalTime().ToString("g")</td>
                             <td class="text-end">
-                                <a class="btn btn-outline-secondary btn-sm"
-                                   asp-page="/Analyses/Review"
-                                   asp-route-id="@analysis.Id">
-                                    Проверить ввод
-                                </a>
-                                <a class="btn btn-outline-primary btn-sm"
-                                   asp-page="/Analyses/Details"
-                                   asp-route-id="@analysis.Id">
-                                    Открыть
-                                </a>
+                                <div class="d-flex justify-content-end gap-2 flex-wrap">
+                                    <div>
+                                        <a class="btn btn-outline-secondary btn-sm"
+                                           asp-page="/Analyses/Review"
+                                           asp-route-id="@analysis.Id">
+                                            Проверить ввод
+                                        </a>
+                                        <div class="small text-muted mt-1">Проверка перед запуском анализа</div>
+                                    </div>
+                                    <div>
+                                        <a class="btn btn-outline-primary btn-sm"
+                                           asp-page="/Analyses/Details"
+                                           asp-route-id="@analysis.Id">
+                                            Обзор
+                                        </a>
+                                        <div class="small text-muted mt-1">Сохраненное состояние</div>
+                                    </div>
+                                </div>
                             </td>
                         </tr>
                     }
