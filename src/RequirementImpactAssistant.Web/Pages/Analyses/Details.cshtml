@@ -38,16 +38,21 @@
                 }
                 @if (Model.Analysis.ExpertConclusion is not null)
                 {
-                    <a class="btn btn-outline-secondary btn-sm"
-                       asp-page-handler="ExportJson"
-                       asp-route-id="@Model.Analysis.Id">
-                        Скачать JSON
-                    </a>
-                    <a class="btn btn-outline-secondary btn-sm"
-                       asp-page-handler="ExportMarkdown"
-                       asp-route-id="@Model.Analysis.Id">
-                        Скачать Markdown
-                    </a>
+                    <div class="d-flex flex-column align-items-end gap-1">
+                        <div class="d-flex flex-wrap justify-content-end gap-2">
+                            <a class="btn btn-outline-secondary btn-sm"
+                               asp-page-handler="ExportJson"
+                               asp-route-id="@Model.Analysis.Id">
+                                Скачать JSON
+                            </a>
+                            <a class="btn btn-outline-secondary btn-sm"
+                               asp-page-handler="ExportMarkdown"
+                               asp-route-id="@Model.Analysis.Id">
+                                Скачать Markdown
+                            </a>
+                        </div>
+                        <span class="text-muted small text-end">Скачивается сохраненный материал, а не утвержденное управленческое решение.</span>
+                    </div>
                 }
                 <a class="btn btn-outline-secondary btn-sm"
                    asp-page="/Analyses/Review"
@@ -604,13 +609,13 @@
     <section id="export" class="py-4 border-top">
         <div class="mb-4">
             <h2 class="h4 mb-2">Экспорт</h2>
-            <p class="text-muted mb-0">Выгрузка сохраненного Markdown/JSON результата через существующие действия. Export не запускает повторный AI/RAG/LLM-анализ.</p>
+            <p class="text-muted mb-0">Экспорт выгружает сохраненный материал предварительного анализа и экспертного заключения в Markdown/JSON. Он не утверждает управленческое решение и не запускает повторный AI/RAG/LLM-анализ.</p>
         </div>
 
         @if (Model.Analysis.ExpertConclusion is null)
         {
             <div class="border rounded p-4 bg-light">
-                <p class="mb-0">Экспорт будет доступен после фиксации экспертного заключения.</p>
+                <p class="mb-0">Экспорт сохраненного материала будет доступен после фиксации экспертного заключения.</p>
             </div>
         }
         else
