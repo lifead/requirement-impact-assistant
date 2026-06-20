@@ -141,6 +141,11 @@ public sealed class ApplicationDbContext(DbContextOptions<ApplicationDbContext> 
             .HasMaxLength(50)
             .IsRequired();
 
+        entity.Property(analysis => analysis.ProjectRequestType)
+            .HasConversion<string>()
+            .HasMaxLength(80)
+            .IsRequired();
+
         entity.Property(analysis => analysis.OriginalDescription)
             .IsRequired();
 

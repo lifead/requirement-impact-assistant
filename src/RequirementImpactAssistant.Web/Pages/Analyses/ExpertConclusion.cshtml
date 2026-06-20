@@ -37,6 +37,11 @@
             </dl>
         }
 
+        <div class="alert alert-secondary" role="note">
+            <p class="mb-2">@AnalysisUiText.ExpertConclusionHumanRecordHelpText</p>
+            <p class="mb-0">@AnalysisUiText.ExpertConclusionReadOnlySummaryText</p>
+        </div>
+
         <form method="post" class="d-grid gap-4">
             <div asp-validation-summary="ModelOnly" class="text-danger"></div>
 
@@ -47,6 +52,7 @@
                         <select asp-for="Input.ConclusionType"
                                 asp-items="AnalysisUiText.ExpertConclusionTypeItems()"
                                 class="form-select"></select>
+                        <div class="form-text">@AnalysisUiText.PassiveExpertConclusionTypeHelpText</div>
                         <span asp-validation-for="Input.ConclusionType" class="text-danger"></span>
                     </div>
                 </div>
@@ -61,6 +67,18 @@
                     <textarea asp-for="Input.Rationale" class="form-control" rows="5"></textarea>
                     <span asp-validation-for="Input.Rationale" class="text-danger"></span>
                 </div>
+            </section>
+
+            <section class="border-top pt-4" aria-labelledby="expert-conclusion-save-summary-heading">
+                <h2 id="expert-conclusion-save-summary-heading" class="h5">Сводка перед сохранением</h2>
+                <dl class="row mb-0">
+                    <dt class="col-sm-3">Что фиксируется</dt>
+                    <dd class="col-sm-9">Выбранный тип заключения, комментарий, обоснование и дата фиксации.</dd>
+                    <dt class="col-sm-3">Кто фиксирует</dt>
+                    <dd class="col-sm-9">Эксперт, работающий с сохраненным предварительным материалом.</dd>
+                    <dt class="col-sm-3">Автоматические действия</dt>
+                    <dd class="col-sm-9">Не выполняются: задачи, уведомления, workflow, внешние запросы и повторный анализ не запускаются.</dd>
+                </dl>
             </section>
 
             <div class="d-flex justify-content-end gap-2 border-top pt-4">

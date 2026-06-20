@@ -7,6 +7,7 @@ public sealed record AnalysisInputSnapshot(
 
 public sealed record AnalysisInputFields(
     string Title,
+    string ProjectRequestType,
     string OriginalDescription,
     string ProjectRequest,
     string SituationDescription,

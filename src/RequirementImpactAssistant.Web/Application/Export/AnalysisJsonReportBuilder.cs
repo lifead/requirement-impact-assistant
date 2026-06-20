@@ -37,6 +37,7 @@ public sealed class AnalysisJsonReportBuilder
             },
             input = new
             {
+                ProjectRequestType = analysis.ProjectRequestType.ToString(),
                 OriginalDescription = analysis.OriginalDescription,
                 OriginalRequirement = analysis.OriginalDescription,
                 ProjectRequest = analysis.ProjectRequest,

@@ -126,6 +126,7 @@ public static class Mvp1SmokeBaselineFixture
             Id = AnalysisId,
             Title = "local demo request - example integration boundary",
             Status = AnalysisStatus.ReadyForAnalysis,
+            ProjectRequestType = ProjectRequestType.ApiOrIntegrationChange,
             OriginalDescription = "The current local demo request describes a controlled change near an example integration boundary.",
             ProjectRequest = "Assess which anonymized requirement catalogue entries, project decisions, tests, and expert review notes may be affected by the example integration boundary change.",
             SituationDescription = "A demo requirement catalogue entry currently requires stable behavior around an example integration boundary.",
@@ -181,6 +182,7 @@ public static class Mvp1SmokeBaselineFixture
             AnalysisId: AnalysisId,
             Analysis: new AnalysisInputFields(
                 Title: "local demo request - example integration boundary",
+                ProjectRequestType: "ApiOrIntegrationChange",
                 OriginalDescription: "The current local demo request describes a controlled change near an example integration boundary.",
                 ProjectRequest: "Assess which anonymized requirement catalogue entries, project decisions, tests, and expert review notes may be affected by the example integration boundary change.",
                 SituationDescription: "A demo requirement catalogue entry currently requires stable behavior around an example integration boundary.",

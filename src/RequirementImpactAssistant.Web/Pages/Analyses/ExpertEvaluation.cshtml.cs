@@ -145,6 +145,7 @@ public sealed class ExpertEvaluationModel(ApplicationDbContext dbContext) : Page
         IQueryable<Analysis> query = dbContext.Analyses
             .AsSplitQuery()
             .Include(candidate => candidate.AiAnalysisResult)
+                .ThenInclude(result => result!.Metadata.RetrievedContextItems)
             .Include(candidate => candidate.ExpertEvaluation)
                 .ThenInclude(candidate => candidate!.EvaluatedItems)
             .Include(candidate => candidate.ExpertEvaluation)
@@ -167,13 +168,50 @@ public sealed class ExpertEvaluationModel(ApplicationDbContext dbContext) : Page
 
     private static AnalysisEvaluationDetails ToDetails(Analysis analysis)
     {
-        var impactSections = ToImpactSections(analysis.AiAnalysisResult!.ImpactMap!);
+        var aiResult = analysis.AiAnalysisResult!;
+        var impactMap = aiResult.ImpactMap!;
+        var impactSections = ToImpactSections(impactMap);
+        var impactItems = impactSections.SelectMany(section => section.Items).ToList();
 
         return new AnalysisEvaluationDetails(
             analysis.Id,
             analysis.Title,
             analysis.Status,
-            analysis.AiAnalysisResult.Status,
+            aiResult.Status,
+            new AnalysisEvaluationContextSummary(
+                analysis.ProjectRequestType,
+                analysis.OriginalDescription,
+                analysis.ProjectRequest,
+                analysis.SituationDescription,
+                analysis.ChangeSource,
+                aiResult.GeneratedAt,
+                aiResult.PromptVersion,
+                aiResult.Metadata.AnalysisMode,
+                aiResult.Metadata.EngineName,
+                aiResult.Metadata.ProviderName,
+                aiResult.Metadata.AdapterName,
+                aiResult.Metadata.ModelWorkflowProfileName,
+                aiResult.Metadata.RetrievedContextState,
+                aiResult.Metadata.ManualContextForwardedToExternalAiOrRag,
+                aiResult.Metadata.Warnings
+                    .Where(warning => !string.IsNullOrWhiteSpace(warning))
+                    .Select(warning => warning.Trim())
+                    .ToList(),
+                aiResult.Metadata.RetrievedContextItems
+                    .Select(item => new RetrievedContextItemSummary(
+                        item.SourceTitle,
+                        item.SourceId,
+                        item.ExternalReference,
+                        item.FragmentId,
+                        item.UrlOrReference,
+                        item.Rank,
+                        item.Score,
+                        item.Completeness,
+                        item.WarningOrLimitationNote))
+                    .ToList(),
+                impactItems.Count,
+                impactMap.ChangeSummary,
+                impactMap.PreliminaryAssessment),
             impactSections,
             analysis.ExpertEvaluation is not null);
     }
@@ -366,8 +404,53 @@ public sealed class ExpertEvaluationModel(ApplicationDbContext dbContext) : Page
         string Title,
         AnalysisStatus Status,
         AiAnalysisResultStatus AiResultStatus,
+        AnalysisEvaluationContextSummary ContextSummary,
         IReadOnlyList<ImpactMapSectionDetails> ImpactSections,
         bool HasExpertEvaluation);
+
+    public sealed record AnalysisEvaluationContextSummary(
+        ProjectRequestType ProjectRequestType,
+        string OriginalDescription,
+        string ProjectRequest,
+        string SituationDescription,
+        string ChangeSource,
+        DateTimeOffset? GeneratedAt,
+        string PromptVersion,
+        AnalysisMode AnalysisMode,
+        string EngineName,
+        string? ProviderName,
+        string? AdapterName,
+        string? ModelWorkflowProfileName,
+        RetrievedContextState RetrievedContextState,
+        bool ManualContextForwardedToExternalAiOrRag,
+        IReadOnlyList<string> Warnings,
+        IReadOnlyList<RetrievedContextItemSummary> RetrievedContextItems,
+        int ImpactItemCount,
+        ImpactMapItem ChangeSummary,
+        ImpactMapItem PreliminaryAssessment)
+    {
+        public int RetrievedContextItemCount => RetrievedContextItems.Count;
+
+        public int LimitationNoteCount =>
+            RetrievedContextItems.Count(item => !string.IsNullOrWhiteSpace(item.WarningOrLimitationNote));
+
+        public bool HasWarningsOrLimitations => Warnings.Count > 0 || LimitationNoteCount > 0;
+
+        public bool IsDirectLlmWithoutRetrievedContext =>
+            AnalysisMode == RequirementImpactAssistant.Web.Domain.Enums.AnalysisMode.DirectLlm &&
+            RetrievedContextItems.Count == 0;
+    }
+
+    public sealed record RetrievedContextItemSummary(
+        string SourceTitle,
+        string? SourceId,
+        string? ExternalReference,
+        string? FragmentId,
+        string? UrlOrReference,
+        int? Rank,
+        double? Score,
+        RetrievedContextItemCompleteness Completeness,
+        string? WarningOrLimitationNote);
 
     public sealed record ImpactMapSectionDetails(
         string Title,

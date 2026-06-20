@@ -98,6 +98,7 @@ public sealed class AnalysisPagesTests
                 Assert.Equal(analysis.Id, pageModel.Analysis.Id);
                 Assert.Equal("Gateway migration", pageModel.Analysis.Title);
                 Assert.Equal(AnalysisStatus.ReadyForAnalysis, pageModel.Analysis.Status);
+                Assert.Equal(ProjectRequestType.NewFunctionality, pageModel.Analysis.ProjectRequestType);
                 Assert.Equal("Original requirement for Gateway migration", pageModel.Analysis.OriginalDescription);
                 Assert.Equal("Project request for Gateway migration", pageModel.Analysis.ProjectRequest);
                 Assert.Equal("Situation for Gateway migration", pageModel.Analysis.SituationDescription);
@@ -188,6 +189,227 @@ public sealed class AnalysisPagesTests
     }
 
     [Fact]
+    public async Task DetailsPage_BuildsPassiveSemanticStatusSummaryFromSavedData()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.ExpertConclusionFixed,
+                new DateTimeOffset(2026, 06, 13, 09, 30, 00, TimeSpan.Zero));
+            analysis.ContextFragments.Add(CreateContextFragment(
+                analysis.Id,
+                ContextFragmentType.Task,
+                "Task tracker",
+                "Manual context.",
+                new DateTimeOffset(2026, 06, 13, 09, 45, 00, TimeSpan.Zero)));
+            var aiResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.CompletedWithWarnings,
+                CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                RetrievedContextState = RetrievedContextState.Partial,
+                Warnings = ["Retrieved context was partial."]
+            };
+            analysis.AiAnalysisResult = aiResult;
+            analysis.ExpertEvaluation = CreateExpertEvaluation(analysis.Id);
+            analysis.ExpertConclusion = new ExpertConclusion
+            {
+                AnalysisId = analysis.Id,
+                ConclusionType = ExpertConclusionType.AcceptWithLimitations,
+                Comment = "Accepted with limitations.",
+                Rationale = "Human expert confirmed the material.",
+                FixedAt = new DateTimeOffset(2026, 06, 13, 10, 00, 00, TimeSpan.Zero)
+            };
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                Assert.Collection(
+                    pageModel.Analysis.StatusSummaryItems,
+                    item =>
+                    {
+                        Assert.Equal("input", item.Key);
+                        Assert.Equal("Входные данные", item.Title);
+                        Assert.Equal("Экспертное заключение зафиксировано", item.StatusLabel);
+                        Assert.Equal("analysis-input", item.Anchor);
+                        Assert.Equal("/Analyses/Review", Assert.Single(item.Actions).PageName);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("manual-context", item.Key);
+                        Assert.Equal("Добавлено: 1", item.StatusLabel);
+                        Assert.Empty(item.Actions);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("retrieved-context", item.Key);
+                        Assert.Equal("Контекст сохранен частично", item.StatusLabel);
+                        Assert.Contains("metadata retrieved context", item.Description, StringComparison.Ordinal);
+                        Assert.Empty(item.Actions);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("preliminary-result", item.Key);
+                        Assert.Equal("Завершено с предупреждениями", item.StatusLabel);
+                        Assert.Empty(item.Actions);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("grounds-limitations", item.Key);
+                        Assert.Equal("Предупреждения: 1", item.StatusLabel);
+                        Assert.Contains("External AI/RAG", item.Description, StringComparison.Ordinal);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("expert-evaluation", item.Key);
+                        Assert.Equal("Зафиксирована", item.StatusLabel);
+                        Assert.Equal("/Analyses/ExpertEvaluation", Assert.Single(item.Actions).PageName);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("expert-conclusion", item.Key);
+                        Assert.Equal("Зафиксировано", item.StatusLabel);
+                        Assert.Equal("/Analyses/ExpertConclusion", Assert.Single(item.Actions).PageName);
+                    },
+                    item =>
+                    {
+                        Assert.Equal("export", item.Key);
+                        Assert.Equal("Доступен", item.StatusLabel);
+                        Assert.Collection(
+                            item.Actions,
+                            action => Assert.Equal("ExportJson", action.HandlerName),
+                            action => Assert.Equal("ExportMarkdown", action.HandlerName));
+                    });
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var unchanged = await dbContext.Analyses
+                    .Include(candidate => candidate.ContextFragments)
+                    .Include(candidate => candidate.AiAnalysisResult)
+                    .Include(candidate => candidate.ExpertEvaluation)
+                    .Include(candidate => candidate.ExpertConclusion)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                Assert.Equal(AnalysisStatus.ExpertConclusionFixed, unchanged.Status);
+                Assert.Single(unchanged.ContextFragments);
+                Assert.NotNull(unchanged.AiAnalysisResult);
+                Assert.NotNull(unchanged.ExpertEvaluation);
+                Assert.NotNull(unchanged.ExpertConclusion);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task DetailsPage_BuildsReadableImpactMapGroupsFromSavedImpactMap()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 09, 30, 00, TimeSpan.Zero));
+            analysis.AiAnalysisResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.Completed,
+                CreateImpactMap());
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new DetailsModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var aiResult = pageModel.Analysis.AiAnalysisResult!;
+
+                Assert.Collection(
+                    aiResult.ImpactMapSummaryCards,
+                    summary =>
+                    {
+                        Assert.Equal("Ориентиры анализа", summary.Title);
+                        Assert.Equal("2 элемента", summary.CountLabel);
+                    },
+                    summary =>
+                    {
+                        Assert.Equal("Затронутые элементы", summary.Title);
+                        Assert.Equal("1 элемент", summary.CountLabel);
+                    },
+                    summary =>
+                    {
+                        Assert.Equal("Риски, вопросы и ограничения", summary.Title);
+                        Assert.Equal("1 элемент", summary.CountLabel);
+                    });
+
+                Assert.Collection(
+                    aiResult.ImpactSectionGroups,
+                    group =>
+                    {
+                        Assert.Equal("impact-map-orientation", group.Anchor);
+                        Assert.Equal(2, group.ItemCount);
+                    },
+                    group =>
+                    {
+                        Assert.Equal("impact-map-affected-elements", group.Anchor);
+                        Assert.Equal(1, group.ItemCount);
+                        Assert.Contains(group.Sections, section => section.Anchor == "impact-map-section-affected-requirements");
+                    },
+                    group =>
+                    {
+                        Assert.Equal("impact-map-risks-questions", group.Anchor);
+                        Assert.Equal(1, group.ItemCount);
+                        Assert.Contains(group.Sections, section => section.Anchor == "impact-map-section-risks");
+                    });
+
+                Assert.Equal(13, aiResult.ImpactSections.Count);
+                var emptyContradictions = Assert.Single(
+                    aiResult.ImpactSections,
+                    section => section.Anchor == "impact-map-section-contradictions");
+                Assert.Empty(emptyContradictions.Items);
+                Assert.Contains("не подтверждает их отсутствие", emptyContradictions.EmptyState, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
     public async Task ReviewPage_OpensExistingAnalysisWithContextFromSqlite()
     {
         var databasePath = CreateDatabasePath();
@@ -226,6 +448,7 @@ public sealed class AnalysisPagesTests
                 Assert.Equal(analysis.Id, pageModel.Analysis.Id);
                 Assert.Equal("Gateway migration", pageModel.Analysis.Title);
                 Assert.Equal(AnalysisStatus.ReadyForAnalysis, pageModel.Analysis.Status);
+                Assert.Equal(ProjectRequestType.NewFunctionality, pageModel.Analysis.ProjectRequestType);
                 Assert.Equal("Original requirement for Gateway migration", pageModel.Analysis.OriginalDescription);
                 Assert.Equal("Project request for Gateway migration", pageModel.Analysis.ProjectRequest);
                 Assert.Equal("Situation for Gateway migration", pageModel.Analysis.SituationDescription);
@@ -294,12 +517,234 @@ public sealed class AnalysisPagesTests
         Assert.Contains("value=\"@nameof(AnalysisMode.ExternalRag)\"", source, StringComparison.Ordinal);
         Assert.Contains("? nameof(AnalysisMode.DirectLlm)", source, StringComparison.Ordinal);
         Assert.Contains(
-            "checked=\"@(selectedAnalysisMode == nameof(AnalysisMode.DirectLlm))\"",
+            "checked=\"@(selectedAnalysisMode == AnalysisMode.DirectLlm)\"",
             source,
             StringComparison.Ordinal);
-        Assert.Contains("External AI/RAG", source, StringComparison.Ordinal);
-        Assert.Contains("может передавать данные во внешний AI/RAG-контур", source, StringComparison.Ordinal);
-        Assert.Contains("может быть ограничен или недоступен", source, StringComparison.Ordinal);
+        Assert.Contains("Выбранный режим:", source, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.AnalysisModeLabel(AnalysisMode.DirectLlm)", source, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.AnalysisModeLabel(AnalysisMode.ExternalRag)", source, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.AnalysisModeReviewDescription(selectedAnalysisMode)", source, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.AnalysisModeReviewDescription(AnalysisMode.DirectLlm)", source, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.AnalysisModeReviewDescription(AnalysisMode.ExternalRag)", source, StringComparison.Ordinal);
+        Assert.Contains("не выполняет сетевую проверку", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ReviewPage_ModeDescriptionsAreProviderNeutralAndDoNotMakeDirectModeLookBroken()
+    {
+        var directDescription = AnalysisUiText.AnalysisModeReviewDescription(AnalysisMode.DirectLlm);
+        var externalDescription = AnalysisUiText.AnalysisModeReviewDescription(AnalysisMode.ExternalRag);
+        var combinedDescription = directDescription + Environment.NewLine + externalDescription;
+
+        Assert.Contains("настроенный в приложении LLM provider", directDescription, StringComparison.Ordinal);
+        Assert.Contains("без проверки внешнего AI/RAG-контура", directDescription, StringComparison.Ordinal);
+        Assert.DoesNotContain("недоступ", directDescription, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("mock fallback", externalDescription, StringComparison.Ordinal);
+        Assert.Contains("внешний adapter", externalDescription, StringComparison.Ordinal);
+        Assert.Contains("только при запуске анализа", externalDescription, StringComparison.Ordinal);
+
+        Assert.All(
+            new[]
+            {
+                "Dify",
+                "DeepSeek",
+                "endpoint",
+                "api key",
+                "bearer",
+                "cookie",
+                "csrf",
+                "raw provider payload"
+            },
+            token => Assert.DoesNotContain(token, combinedDescription, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void ReviewPageModel_DependsOnlyOnApplicationExecutionBoundaryForAnalysisRun()
+    {
+        var constructorParameterTypes = typeof(ReviewModel)
+            .GetConstructors()
+            .SelectMany(constructor => constructor.GetParameters())
+            .Select(parameter => parameter.ParameterType)
+            .ToArray();
+
+        Assert.Contains(typeof(ApplicationDbContext), constructorParameterTypes);
+        Assert.Contains(typeof(IAnalysisExecutionService), constructorParameterTypes);
+
+        Assert.All(
+            new[]
+            {
+                "DifyExternalRagAdapter",
+                "DifyExternalRagOptions",
+                "IExternalRagAdapter",
+                "ILlmProvider",
+                "HttpClient"
+            },
+            forbiddenTypeName => Assert.DoesNotContain(
+                constructorParameterTypes,
+                parameterType => string.Equals(parameterType.Name, forbiddenTypeName, StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public void ReviewPage_SourceDoesNotReferenceProviderAdaptersNetworkOrSecretBearingUi()
+    {
+        var combinedSource = string.Join(
+            Environment.NewLine,
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Review.cshtml"),
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Review.cshtml.cs"));
+
+        Assert.Contains("IAnalysisExecutionService", combinedSource, StringComparison.Ordinal);
+
+        Assert.All(
+            new[]
+            {
+                "DifyExternalRagAdapter",
+                "DifyExternalRagOptions",
+                "IExternalRagAdapter",
+                "ILlmProvider",
+                "HttpClient",
+                "DifyWorkflow",
+                "DifyAgent",
+                "Endpoint",
+                "ApiKey",
+                "Bearer",
+                "Cookie",
+                "CSRF",
+                "RawResponse",
+                "RawPayload",
+                "Authorization"
+            },
+            token => Assert.DoesNotContain(token, combinedSource, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void InputFieldUiText_UsesMvp3Terminology()
+    {
+        Assert.Equal("Текущее состояние", AnalysisUiText.OriginalDescriptionLabel);
+        Assert.Equal("Проектное изменение", AnalysisUiText.ProjectRequestLabel);
+        Assert.Equal("Ситуация и причина изменения", AnalysisUiText.SituationDescriptionLabel);
+        Assert.Equal("Источник изменения", AnalysisUiText.ChangeSourceLabel);
+
+        Assert.Contains("точку отсчета", AnalysisUiText.OriginalDescriptionHelpText, StringComparison.Ordinal);
+        Assert.Contains("без предположения, что оно уже принято", AnalysisUiText.ProjectRequestHelpText, StringComparison.Ordinal);
+        Assert.Contains("причину", AnalysisUiText.SituationDescriptionHelpText, StringComparison.Ordinal);
+        Assert.Contains("источник запроса", AnalysisUiText.ChangeSourceHelpText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InputFieldPageSourcesUseCentralizedUiText()
+    {
+        var sources = new[]
+        {
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Create.cshtml"),
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Edit.cshtml"),
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml"),
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Review.cshtml")
+        };
+
+        Assert.All(
+            sources,
+            source =>
+            {
+                Assert.Contains("AnalysisUiText.OriginalDescriptionLabel", source, StringComparison.Ordinal);
+                Assert.Contains("AnalysisUiText.ProjectRequestLabel", source, StringComparison.Ordinal);
+                Assert.Contains("AnalysisUiText.SituationDescriptionLabel", source, StringComparison.Ordinal);
+                Assert.Contains("AnalysisUiText.ChangeSourceLabel", source, StringComparison.Ordinal);
+                Assert.DoesNotContain("Исходное описание", source, StringComparison.Ordinal);
+                Assert.DoesNotContain("Проектный запрос", source, StringComparison.Ordinal);
+                Assert.DoesNotContain("Описание ситуации", source, StringComparison.Ordinal);
+            });
+
+        var formInputSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/AnalysisFormInput.cs");
+        Assert.Contains("AnalysisUiText.OriginalDescriptionRequiredMessage", formInputSource, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.ProjectRequestRequiredMessage", formInputSource, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.SituationDescriptionRequiredMessage", formInputSource, StringComparison.Ordinal);
+        Assert.Contains("AnalysisUiText.ChangeSourceRequiredMessage", formInputSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DetailsPage_SourceRendersSemanticSummaryForExistingSectionsAndActions()
+    {
+        var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+        var detailsModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml.cs");
+        var combinedSource = detailsSource + detailsModelSource;
+
+        Assert.Contains("Model.Analysis.StatusSummaryItems", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("href=\"#@summaryItem.Anchor\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"analysis-input\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"manual-context\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"retrieved-context\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"preliminary-result\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"grounds-limitations\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"expert-evaluation\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"expert-conclusion\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"export\"", detailsSource, StringComparison.Ordinal);
+
+        Assert.Contains("new(\"Проверить ввод\", \"/Analyses/Review\", null)", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("new(\"Открыть оценку\", \"/Analyses/ExpertEvaluation\", null)", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("new(\"Открыть заключение\", \"/Analyses/ExpertConclusion\", null)", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("new(\"Скачать JSON\", null, \"ExportJson\")", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("new(\"Скачать Markdown\", null, \"ExportMarkdown\")", detailsModelSource, StringComparison.Ordinal);
+
+        Assert.All(
+            new[]
+            {
+                "Dashboard",
+                "Taskboard",
+                "Approval",
+                "OnPostApprove",
+                "OnPostStartWorkflow",
+                "OnPostRunAnalysis"
+            },
+            token => Assert.DoesNotContain(token, combinedSource, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void DetailsPage_SourceRendersImpactMapReadabilitySectionsAsPreliminaryMaterial()
+    {
+        var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+        var detailsModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml.cs");
+        var combinedSource = detailsSource + detailsModelSource;
+
+        Assert.Contains("id=\"impact-map\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("aria-label=\"Навигация по карте влияния\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("aiResult.ImpactMapSummaryCards", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("aiResult.ImpactSectionGroups", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"@impactGroup.Anchor\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("id=\"@impactSection.Anchor\"", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("preliminary analytical material", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("не является экспертным заключением", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("Проверьте предупреждения, ограничения", detailsSource, StringComparison.Ordinal);
+
+        Assert.Contains("ImpactMapSummaryCards", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("ImpactSectionGroups", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("impact-map-affected-elements", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("impact-map-risks-questions", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("не подтверждает отсутствие влияния", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("не подтверждает их отсутствие", detailsModelSource, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("OnPostApprove", combinedSource, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("OnPostStartWorkflow", combinedSource, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("dashboard", combinedSource, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void DetailsPage_SourceSeparatesManualContextFromRetrievedContext()
+    {
+        var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
+        var detailsModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml.cs");
+        var combinedSource = detailsSource + detailsModelSource;
+
+        Assert.Contains("Manual context карточки анализа", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("Это материалы, введенные пользователем в карточке анализа.", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("Retrieved context внешнего AI/RAG", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("RAG knowledge base остается внешней базой provider-а.", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("только фрагменты или metadata, которые provider вернул для конкретного анализа", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("manual context и retrieved context показаны в отдельных разделах", detailsSource, StringComparison.Ordinal);
+        Assert.Contains("Direct LLM не создает искусственный retrieved context", detailsModelSource, StringComparison.Ordinal);
+        Assert.Contains("GetRetrievedContextStatusLabel()", detailsModelSource, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("внутренняя база", combinedSource, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("основан на извлеченном контексте", combinedSource, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -1165,6 +1610,8 @@ public sealed class AnalysisPagesTests
                 Assert.False(metadata.ManualContextForwardedToExternalAiOrRag);
                 Assert.Empty(metadata.Warnings);
                 Assert.Empty(metadata.RetrievedContextItems);
+                Assert.False(metadata.HasRetrievedContextItems);
+                Assert.True(metadata.IsDirectLlmWithoutRetrievedContext);
             }
 
             var detailsSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/Details.cshtml");
@@ -1315,6 +1762,8 @@ public sealed class AnalysisPagesTests
                 Assert.NotNull(pageModel.Analysis);
                 var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
                 Assert.Equal(RetrievedContextState.Available, metadata.RetrievedContextState);
+                Assert.True(metadata.HasRetrievedContextItems);
+                Assert.False(metadata.IsDirectLlmWithoutRetrievedContext);
                 var item = Assert.Single(metadata.RetrievedContextItems);
                 Assert.Equal("Gateway API requirement", item.SourceTitle);
                 Assert.Equal("REQ-42", item.SourceId);
@@ -1517,6 +1966,8 @@ public sealed class AnalysisPagesTests
                 var metadata = pageModel.Analysis.AiAnalysisResult!.Metadata;
                 Assert.Equal(RetrievedContextState.Unavailable, metadata.RetrievedContextState);
                 Assert.Empty(metadata.RetrievedContextItems);
+                Assert.False(metadata.HasRetrievedContextItems);
+                Assert.False(metadata.IsDirectLlmWithoutRetrievedContext);
                 Assert.Contains(
                     "воспроизводимость",
                     AnalysisUiText.RetrievedContextStateDescription(metadata.RetrievedContextState));
@@ -1594,12 +2045,56 @@ public sealed class AnalysisPagesTests
 
                 Assert.Equal("Payment API change", analysis.Title);
                 Assert.Equal(AnalysisStatus.ReadyForAnalysis, analysis.Status);
+                Assert.Equal(ProjectRequestType.ApiOrIntegrationChange, analysis.ProjectRequestType);
                 Assert.Equal("Original requirement for Payment API change", analysis.OriginalDescription);
                 Assert.Equal("Project request for Payment API change", analysis.ProjectRequest);
                 Assert.Equal("Situation for Payment API change", analysis.SituationDescription);
                 Assert.Equal("Change source for Payment API change", analysis.ChangeSource);
                 Assert.NotEqual(default, analysis.CreatedAt);
                 Assert.Equal(analysis.CreatedAt, analysis.UpdatedAt);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task CreatePage_SavesExplicitOtherProjectRequestType()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+            }
+
+            Guid analysisId;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var input = CreateInput("Other request");
+                input.ProjectRequestType = ProjectRequestType.Other;
+                var pageModel = new CreateModel(dbContext)
+                {
+                    Input = input
+                };
+
+                var result = await pageModel.OnPostAsync();
+                var redirect = Assert.IsType<RedirectToPageResult>(result);
+                analysisId = Assert.IsType<Guid>(redirect.RouteValues?["id"]);
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var analysis = await dbContext.Analyses.SingleAsync(candidate => candidate.Id == analysisId);
+
+                Assert.Equal(ProjectRequestType.Other, analysis.ProjectRequestType);
             }
         }
         finally
@@ -1626,7 +2121,7 @@ public sealed class AnalysisPagesTests
 
                 Assert.IsType<PageResult>(result);
                 Assert.False(pageModel.ModelState.IsValid);
-                Assert.Equal(5, pageModel.ModelState.ErrorCount);
+                Assert.Equal(6, pageModel.ModelState.ErrorCount);
                 Assert.Empty(await dbContext.Analyses.ToListAsync());
             }
         }
@@ -1673,6 +2168,7 @@ public sealed class AnalysisPagesTests
                 var updated = await dbContext.Analyses.SingleAsync(candidate => candidate.Id == analysis.Id);
 
                 Assert.Equal("Edited request", updated.Title);
+                Assert.Equal(ProjectRequestType.ApiOrIntegrationChange, updated.ProjectRequestType);
                 Assert.Equal("Original requirement for Edited request", updated.OriginalDescription);
                 Assert.Equal("Project request for Edited request", updated.ProjectRequest);
                 Assert.Equal("Situation for Edited request", updated.SituationDescription);
@@ -1714,7 +2210,7 @@ public sealed class AnalysisPagesTests
 
                 Assert.IsType<PageResult>(result);
                 Assert.False(pageModel.ModelState.IsValid);
-                Assert.Equal(5, pageModel.ModelState.ErrorCount);
+                Assert.Equal(6, pageModel.ModelState.ErrorCount);
             }
 
             await using (var dbContext = new ApplicationDbContext(options))
@@ -1770,6 +2266,101 @@ public sealed class AnalysisPagesTests
                 Assert.Contains(
                     pageModel.Input.EvaluatedItems,
                     item => item.TargetId == "affected-requirement-001");
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExpertEvaluationPage_ShowsSavedContextSummaryForExpertBeforeEvaluation()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.CompletedWithWarnings,
+                CreateImpactMap());
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                ProviderName = "external-provider",
+                AdapterName = "external-adapter",
+                ModelWorkflowProfileName = "impact-profile",
+                RetrievedContextState = RetrievedContextState.Partial,
+                ManualContextForwardedToExternalAiOrRag = true,
+                Warnings = ["Retrieved context was partial.", "   "]
+            };
+            aiResult.Metadata.RetrievedContextItems.Add(new RetrievedContextItem
+            {
+                SourceTitle = "Gateway ADR",
+                SourceId = "ADR-17",
+                ExternalReference = "external-doc-17",
+                FragmentId = "fragment-17",
+                UrlOrReference = "kb://gateway/adr-17",
+                Rank = 1,
+                Score = 0.92,
+                Completeness = RetrievedContextItemCompleteness.ExcerptOnly,
+                WarningOrLimitationNote = "Only an excerpt was saved."
+            });
+            analysis.AiAnalysisResult = aiResult;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertEvaluationModel(dbContext);
+
+                var result = await pageModel.OnGetAsync(analysis.Id);
+
+                Assert.IsType<PageResult>(result);
+                Assert.NotNull(pageModel.Analysis);
+                var context = pageModel.Analysis.ContextSummary;
+                Assert.Equal(ProjectRequestType.NewFunctionality, context.ProjectRequestType);
+                Assert.Equal("Original requirement for Gateway migration", context.OriginalDescription);
+                Assert.Equal("Project request for Gateway migration", context.ProjectRequest);
+                Assert.Equal("Situation for Gateway migration", context.SituationDescription);
+                Assert.Equal("Change source for Gateway migration", context.ChangeSource);
+                Assert.Equal(AnalysisMode.ExternalRag, context.AnalysisMode);
+                Assert.Equal("external-analysis-engine", context.EngineName);
+                Assert.Equal("external-provider", context.ProviderName);
+                Assert.Equal("external-adapter", context.AdapterName);
+                Assert.Equal("impact-profile", context.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.Partial, context.RetrievedContextState);
+                Assert.True(context.ManualContextForwardedToExternalAiOrRag);
+                Assert.Equal("Retrieved context was partial.", Assert.Single(context.Warnings));
+                Assert.Equal(1, context.RetrievedContextItemCount);
+                Assert.Equal(1, context.LimitationNoteCount);
+                Assert.True(context.HasWarningsOrLimitations);
+                Assert.False(context.IsDirectLlmWithoutRetrievedContext);
+                Assert.Equal("Gateway change summary", context.ChangeSummary.Title);
+                Assert.Equal("Requires expert review", context.PreliminaryAssessment.Title);
+
+                var retrievedContext = Assert.Single(context.RetrievedContextItems);
+                Assert.Equal("Gateway ADR", retrievedContext.SourceTitle);
+                Assert.Equal("ADR-17", retrievedContext.SourceId);
+                Assert.Equal("external-doc-17", retrievedContext.ExternalReference);
+                Assert.Equal("fragment-17", retrievedContext.FragmentId);
+                Assert.Equal("kb://gateway/adr-17", retrievedContext.UrlOrReference);
+                Assert.Equal(1, retrievedContext.Rank);
+                Assert.Equal(0.92, retrievedContext.Score);
+                Assert.Equal(RetrievedContextItemCompleteness.ExcerptOnly, retrievedContext.Completeness);
+                Assert.Equal("Only an excerpt was saved.", retrievedContext.WarningOrLimitationNote);
             }
         }
         finally
@@ -2083,6 +2674,212 @@ public sealed class AnalysisPagesTests
         finally
         {
             DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public async Task ExpertEvaluationPage_SaveDoesNotChangeSavedAiAnalysisResultOrRetrievedContext()
+    {
+        var databasePath = CreateDatabasePath();
+
+        try
+        {
+            var options = CreateOptions(databasePath);
+            var impactMap = CreateImpactMap();
+            var analysis = CreateAnalysis(
+                "Gateway migration",
+                AnalysisStatus.NeedsExpertEvaluation,
+                new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
+            var aiResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.CompletedWithWarnings,
+                impactMap);
+            aiResult.Metadata = new AiAnalysisResultMetadata
+            {
+                AnalysisMode = AnalysisMode.ExternalRag,
+                EngineName = "external-analysis-engine",
+                ProviderName = "external-provider",
+                AdapterName = "external-adapter",
+                ModelWorkflowProfileName = "impact-profile",
+                RetrievedContextState = RetrievedContextState.MetadataOnly,
+                ManualContextForwardedToExternalAiOrRag = true,
+                Warnings = ["Metadata only context."]
+            };
+            aiResult.Metadata.RetrievedContextItems.Add(new RetrievedContextItem
+            {
+                SourceTitle = "Gateway ADR",
+                SourceId = "ADR-17",
+                ExternalReference = "external-doc-17",
+                FragmentId = "fragment-17",
+                UrlOrReference = "kb://gateway/adr-17",
+                Rank = 2,
+                Score = 0.84,
+                Completeness = RetrievedContextItemCompleteness.MetadataOnly,
+                WarningOrLimitationNote = "Full text was not returned."
+            });
+            analysis.AiAnalysisResult = aiResult;
+
+            var originalAiResultId = aiResult.Id;
+            var originalGeneratedAt = aiResult.GeneratedAt;
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                await dbContext.Database.MigrateAsync();
+                dbContext.Analyses.Add(analysis);
+                await dbContext.SaveChangesAsync();
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var pageModel = new ExpertEvaluationModel(dbContext)
+                {
+                    Input = CreateExpertEvaluationInput(impactMap)
+                };
+
+                Assert.IsType<RedirectToPageResult>(await pageModel.OnPostAsync(analysis.Id));
+            }
+
+            await using (var dbContext = new ApplicationDbContext(options))
+            {
+                var updated = await dbContext.Analyses
+                    .AsNoTracking()
+                    .Include(candidate => candidate.AiAnalysisResult)
+                        .ThenInclude(result => result!.Metadata.RetrievedContextItems)
+                    .Include(candidate => candidate.ExpertEvaluation)
+                    .SingleAsync(candidate => candidate.Id == analysis.Id);
+
+                var savedResult = Assert.IsType<AiAnalysisResult>(updated.AiAnalysisResult);
+                Assert.NotNull(updated.ExpertEvaluation);
+                Assert.Equal(originalAiResultId, savedResult.Id);
+                Assert.Equal(analysis.Id, savedResult.AnalysisId);
+                Assert.Equal(AiAnalysisResultStatus.CompletedWithWarnings, savedResult.Status);
+                Assert.Equal(originalGeneratedAt, savedResult.GeneratedAt);
+                Assert.Equal("test-engine", savedResult.EngineName);
+                Assert.Equal("test-provider", savedResult.ProviderName);
+                Assert.Equal("test-model", savedResult.ModelName);
+                Assert.Equal("test-v1", savedResult.PromptVersion);
+                Assert.Equal("{ \"input\": \"snapshot\" }", savedResult.InputSnapshot);
+                Assert.Equal("{ \"raw\": \"response\" }", savedResult.RawResponse);
+                Assert.Equal(string.Empty, savedResult.ErrorMessage);
+                Assert.Equal("Gateway change summary", savedResult.ImpactMap!.ChangeSummary.Title);
+                Assert.Equal("Requires expert review", savedResult.ImpactMap.PreliminaryAssessment.Title);
+
+                Assert.Equal(AnalysisMode.ExternalRag, savedResult.Metadata.AnalysisMode);
+                Assert.Equal("external-analysis-engine", savedResult.Metadata.EngineName);
+                Assert.Equal("external-provider", savedResult.Metadata.ProviderName);
+                Assert.Equal("external-adapter", savedResult.Metadata.AdapterName);
+                Assert.Equal("impact-profile", savedResult.Metadata.ModelWorkflowProfileName);
+                Assert.Equal(RetrievedContextState.MetadataOnly, savedResult.Metadata.RetrievedContextState);
+                Assert.True(savedResult.Metadata.ManualContextForwardedToExternalAiOrRag);
+                Assert.Equal("Metadata only context.", Assert.Single(savedResult.Metadata.Warnings));
+
+                var retrievedContextItem = Assert.Single(savedResult.Metadata.RetrievedContextItems);
+                Assert.Equal("Gateway ADR", retrievedContextItem.SourceTitle);
+                Assert.Equal("ADR-17", retrievedContextItem.SourceId);
+                Assert.Equal("external-doc-17", retrievedContextItem.ExternalReference);
+                Assert.Equal("fragment-17", retrievedContextItem.FragmentId);
+                Assert.Equal("kb://gateway/adr-17", retrievedContextItem.UrlOrReference);
+                Assert.Equal(2, retrievedContextItem.Rank);
+                Assert.Equal(0.84, retrievedContextItem.Score);
+                Assert.Equal(RetrievedContextItemCompleteness.MetadataOnly, retrievedContextItem.Completeness);
+                Assert.Equal("Full text was not returned.", retrievedContextItem.WarningOrLimitationNote);
+            }
+        }
+        finally
+        {
+            DeleteDatabase(databasePath);
+        }
+    }
+
+    [Fact]
+    public void ExpertEvaluationPage_DoesNotDependOnAnalysisExecutionEngineOrProviders()
+    {
+        var constructor = Assert.Single(typeof(ExpertEvaluationModel).GetConstructors());
+        Assert.Equal(
+            [typeof(ApplicationDbContext)],
+            constructor.GetParameters().Select(parameter => parameter.ParameterType).ToArray());
+
+        var combinedSource = string.Join(
+            Environment.NewLine,
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/ExpertEvaluation.cshtml"),
+            ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/ExpertEvaluation.cshtml.cs"));
+
+        foreach (var forbiddenToken in new[]
+        {
+            "IAnalysisExecutionService",
+            "IAiAnalysisEngine",
+            "IAiAnalysisEngineSelector",
+            "IExternalRagAdapter",
+            "ILlmProvider",
+            "DifyExternalRagAdapter",
+            "DeepSeekLlmProvider",
+            ".RunAsync(",
+            ".AnalyzeAsync("
+        })
+        {
+            Assert.DoesNotContain(forbiddenToken, combinedSource, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void ExpertConclusionPage_SourcePresentsPassiveHumanRecordWithoutAnalysisOrWorkflowActions()
+    {
+        var constructor = Assert.Single(typeof(ExpertConclusionModel).GetConstructors());
+        Assert.Equal(
+            [typeof(ApplicationDbContext)],
+            constructor.GetParameters().Select(parameter => parameter.ParameterType).ToArray());
+
+        var conclusionSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/ExpertConclusion.cshtml");
+        var conclusionModelSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/ExpertConclusion.cshtml.cs");
+        var uiTextSource = ReadProjectFile("src/RequirementImpactAssistant.Web/Pages/Analyses/AnalysisUiText.cs");
+        var combinedSource = string.Join(Environment.NewLine, conclusionSource, conclusionModelSource, uiTextSource);
+
+        Assert.Equal(
+            "Рекомендовать разделение на несколько задач",
+            AnalysisUiText.ExpertConclusionTypeLabel(ExpertConclusionType.SplitIntoSeveralTasks));
+        Assert.Equal(
+            "Рекомендовать повторный анализ",
+            AnalysisUiText.ExpertConclusionTypeLabel(ExpertConclusionType.ReturnForReanalysis));
+        Assert.Equal(
+            "Требуется уточнение",
+            AnalysisUiText.ExpertConclusionTypeLabel(ExpertConclusionType.SendForClarification));
+
+        Assert.Contains("ExpertConclusionHumanRecordHelpText", conclusionSource, StringComparison.Ordinal);
+        Assert.Contains("ExpertConclusionReadOnlySummaryText", conclusionSource, StringComparison.Ordinal);
+        Assert.Contains("PassiveExpertConclusionTypeHelpText", conclusionSource, StringComparison.Ordinal);
+        Assert.Contains("Сводка перед сохранением", conclusionSource, StringComparison.Ordinal);
+        Assert.Contains("Автоматические действия", conclusionSource, StringComparison.Ordinal);
+        Assert.Contains(
+            "не запускает повторный анализ автоматически",
+            AnalysisUiText.ExpertConclusionReadOnlySummaryText,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "не выполняют эти действия автоматически",
+            AnalysisUiText.PassiveExpertConclusionTypeHelpText,
+            StringComparison.Ordinal);
+
+        Assert.DoesNotContain("Разделить на несколько задач", uiTextSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Вернуть на повторный анализ", uiTextSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("Отправить на уточнение", uiTextSource, StringComparison.Ordinal);
+
+        foreach (var forbiddenToken in new[]
+        {
+            "IAnalysisExecutionService",
+            "IAiAnalysisEngine",
+            "IAiAnalysisEngineSelector",
+            "IExternalRagAdapter",
+            "ILlmProvider",
+            "DifyExternalRagAdapter",
+            "DeepSeekLlmProvider",
+            ".RunAsync(",
+            ".AnalyzeAsync(",
+            "OnPostRunAnalysis",
+            "OnPostStartWorkflow",
+            "OnPostCreateTask",
+            "OnPostNotify"
+        })
+        {
+            Assert.DoesNotContain(forbiddenToken, combinedSource, StringComparison.Ordinal);
         }
     }
 
@@ -2421,6 +3218,15 @@ public sealed class AnalysisPagesTests
                 AnalysisStatus.NeedsExpertEvaluation,
                 new DateTimeOffset(2026, 06, 13, 08, 00, 00, TimeSpan.Zero));
             analysis.ExpertEvaluation = CreateExpertEvaluation(analysis.Id);
+            analysis.AiAnalysisResult = CreateAiAnalysisResult(
+                analysis.Id,
+                AiAnalysisResultStatus.Completed,
+                CreateImpactMap());
+            var originalAiResultId = analysis.AiAnalysisResult.Id;
+            var originalAiGeneratedAt = analysis.AiAnalysisResult.GeneratedAt;
+            var originalAiInputSnapshot = analysis.AiAnalysisResult.InputSnapshot;
+            var originalAiRawResponse = analysis.AiAnalysisResult.RawResponse;
+            var originalAiPromptVersion = analysis.AiAnalysisResult.PromptVersion;
 
             await using (var dbContext = new ApplicationDbContext(options))
             {
@@ -2449,14 +3255,23 @@ public sealed class AnalysisPagesTests
                 var updated = await dbContext.Analyses
                     .Include(candidate => candidate.ExpertEvaluation)
                     .Include(candidate => candidate.ExpertConclusion)
+                    .Include(candidate => candidate.AiAnalysisResult)
                     .SingleAsync(candidate => candidate.Id == analysis.Id);
 
                 Assert.Equal(AnalysisStatus.ExpertConclusionFixed, updated.Status);
                 Assert.NotNull(updated.ExpertEvaluation);
                 var conclusion = Assert.IsType<ExpertConclusion>(updated.ExpertConclusion);
                 Assert.Equal(conclusionType, conclusion.ConclusionType);
+                var aiResult = Assert.IsType<AiAnalysisResult>(updated.AiAnalysisResult);
+                Assert.Equal(originalAiResultId, aiResult.Id);
+                Assert.Equal(AiAnalysisResultStatus.Completed, aiResult.Status);
+                Assert.Equal(originalAiGeneratedAt, aiResult.GeneratedAt);
+                Assert.Equal(originalAiInputSnapshot, aiResult.InputSnapshot);
+                Assert.Equal(originalAiRawResponse, aiResult.RawResponse);
+                Assert.Equal(originalAiPromptVersion, aiResult.PromptVersion);
                 Assert.Equal(1, await dbContext.ExpertEvaluations.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
                 Assert.Equal(1, await dbContext.ExpertConclusions.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
+                Assert.Equal(1, await dbContext.AiAnalysisResults.CountAsync(candidate => candidate.AnalysisId == analysis.Id));
                 Assert.Empty(await dbContext.ContextFragments.Where(candidate => candidate.AnalysisId == analysis.Id).ToListAsync());
             }
         }
@@ -2571,6 +3386,7 @@ public sealed class AnalysisPagesTests
             Id = Guid.NewGuid(),
             Title = title,
             Status = status,
+            ProjectRequestType = ProjectRequestType.NewFunctionality,
             OriginalDescription = $"Original requirement for {title}",
             ProjectRequest = $"Project request for {title}",
             SituationDescription = $"Situation for {title}",
@@ -2584,6 +3400,7 @@ public sealed class AnalysisPagesTests
         new()
         {
             Title = title,
+            ProjectRequestType = ProjectRequestType.ApiOrIntegrationChange,
             OriginalDescription = $"Original requirement for {title}",
             ProjectRequest = $"Project request for {title}",
             SituationDescription = $"Situation for {title}",

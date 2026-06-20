@@ -135,6 +135,7 @@ public sealed class AnalysisMarkdownReportBuilder
     private static void AppendInput(StringBuilder builder, DomainAnalysis analysis)
     {
         AppendHeading(builder, 2, "Input");
+        AppendBullet(builder, "Project request type", analysis.ProjectRequestType.ToString());
         AppendField(builder, "Original requirement", analysis.OriginalDescription);
         AppendField(builder, "Proposed change", analysis.ProjectRequest);
         AppendField(builder, "Situation", analysis.SituationDescription);

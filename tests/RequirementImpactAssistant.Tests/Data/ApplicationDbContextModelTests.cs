@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata;
 using RequirementImpactAssistant.Web.Data;
 using RequirementImpactAssistant.Web.Domain;
+using RequirementImpactAssistant.Web.Domain.Enums;
 using RequirementImpactAssistant.Web.Domain.Impact;
 
 namespace RequirementImpactAssistant.Tests.Data;
@@ -61,6 +62,21 @@ public sealed class ApplicationDbContextModelTests
     }
 
     [Fact]
+    public void Model_MapsProjectRequestTypeAsRequiredStringColumn()
+    {
+        using var dbContext = CreateDbContext();
+        var entityType = dbContext.Model.FindEntityType(typeof(Analysis));
+        var property = entityType?.FindProperty(nameof(Analysis.ProjectRequestType));
+
+        Assert.NotNull(property);
+        Assert.Equal(typeof(ProjectRequestType), property.ClrType);
+        Assert.Equal("TEXT", property.GetColumnType());
+        Assert.Equal(80, property.GetMaxLength());
+        Assert.False(property.IsNullable);
+        Assert.Equal(typeof(string), property.GetTypeMapping().Converter?.ProviderClrType);
+    }
+
+    [Fact]
     public void Model_MapsAiAnalysisResultMetadataWithRetrievedContextItemStorage()
     {
         using var dbContext = CreateDbContext();
@@ -108,6 +124,11 @@ public sealed class ApplicationDbContextModelTests
         Assert.DoesNotContain("RetrievalTraces", tableNames);
         Assert.DoesNotContain("RagTraces", tableNames);
         Assert.DoesNotContain("ExternalProviderResponses", tableNames);
+
+        var analysisColumns = await ReadTableColumnsAsync(connection, "Analyses");
+        Assert.True(analysisColumns.TryGetValue("ProjectRequestType", out var projectRequestType));
+        Assert.False(projectRequestType.IsNullable);
+        Assert.Equal("'Other'", projectRequestType.DefaultValue);
 
         var columns = await ReadTableColumnsAsync(connection, "AiAnalysisResults");
         Assert.True(columns.TryGetValue("AnalysisMode", out var analysisMode));

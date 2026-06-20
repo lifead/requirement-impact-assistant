@@ -6,9 +6,42 @@ namespace RequirementImpactAssistant.Web.Pages.Analyses;
 
 public static class AnalysisUiText
 {
+    public const string ProjectRequestTypeFieldLabel = "Тип проектного запроса";
+    public const string ProjectRequestTypePlaceholder = "Выберите тип проектного запроса";
+    public const string ProjectRequestTypeRequiredMessage = "Тип проектного запроса обязателен.";
+
+    public const string OriginalDescriptionLabel = "Текущее состояние";
+    public const string OriginalDescriptionHelpText = "Кратко опишите текущую точку отсчета: требование, процесс, API, интеграцию, ограничение или проектное решение на момент анализа.";
+    public const string OriginalDescriptionRequiredMessage = "Текущее состояние обязательно.";
+
+    public const string ProjectRequestLabel = "Проектное изменение";
+    public const string ProjectRequestHelpText = "Опишите предлагаемое проектное изменение как предмет анализа, без предположения, что оно уже принято.";
+    public const string ProjectRequestRequiredMessage = "Проектное изменение обязательно.";
+
+    public const string SituationDescriptionLabel = "Ситуация и причина изменения";
+    public const string SituationDescriptionHelpText = "Укажите обстоятельства и причину, из-за которых рассматривается изменение.";
+    public const string SituationDescriptionRequiredMessage = "Ситуация и причина изменения обязательны.";
+
+    public const string ChangeSourceLabel = "Источник изменения";
+    public const string ChangeSourceHelpText = "Укажите источник запроса: встреча, документ, задача, письмо или другое основание.";
+    public const string ChangeSourceRequiredMessage = "Источник изменения обязателен.";
+
+    public const string ExpertConclusionHumanRecordHelpText =
+        "Экспертное заключение фиксирует вывод человека по сохраненному предварительному материалу.";
+
+    public const string ExpertConclusionReadOnlySummaryText =
+        "При сохранении будет записан тип заключения, комментарий, обоснование и дата фиксации. Программа не создает задачи, уведомления, workflow, внешние запросы и не запускает повторный анализ автоматически.";
+
+    public const string PassiveExpertConclusionTypeHelpText =
+        "Типы с разделением на задачи или повторным анализом являются пассивной фиксацией экспертного вывода и не выполняют эти действия автоматически.";
+
     public static IEnumerable<SelectListItem> ContextFragmentTypeItems() =>
         Enum.GetValues<ContextFragmentType>()
             .Select(value => new SelectListItem(ContextFragmentTypeLabel(value), ((int)value).ToString()));
+
+    public static IEnumerable<SelectListItem> ProjectRequestTypeItems() =>
+        Enum.GetValues<ProjectRequestType>()
+            .Select(value => new SelectListItem(ProjectRequestTypeLabel(value), ((int)value).ToString()));
 
     public static IEnumerable<SelectListItem> ExpertConclusionTypeItems() =>
         Enum.GetValues<ExpertConclusionType>()
@@ -71,6 +104,16 @@ public static class AnalysisUiText
             _ => mode.ToString()
         };
 
+    public static string AnalysisModeReviewDescription(AnalysisMode mode) =>
+        mode switch
+        {
+            AnalysisMode.DirectLlm =>
+                "Использует настроенный в приложении LLM provider без проверки внешнего AI/RAG-контура на этой странице.",
+            AnalysisMode.ExternalRag =>
+                "Может использовать mock fallback или внешний adapter в зависимости от конфигурации приложения; доступность фиксируется только при запуске анализа.",
+            _ => mode.ToString()
+        };
+
     public static string RetrievedContextStateLabel(RetrievedContextState state) =>
         state switch
         {
@@ -120,16 +163,31 @@ public static class AnalysisUiText
             _ => type.ToString()
         };
 
+    public static string ProjectRequestTypeLabel(ProjectRequestType type) =>
+        type switch
+        {
+            ProjectRequestType.RequirementChange => "Изменение требования",
+            ProjectRequestType.NewFunctionality => "Новая функциональность",
+            ProjectRequestType.DefectFix => "Исправление дефекта",
+            ProjectRequestType.RequirementClarification => "Уточнение требования",
+            ProjectRequestType.ApiOrIntegrationChange => "Изменение API / интеграции",
+            ProjectRequestType.ArchitecturalConstraintChange => "Изменение архитектурного ограничения",
+            ProjectRequestType.ProjectDecisionChange => "Изменение проектного решения",
+            ProjectRequestType.UserScenarioChange => "Изменение пользовательского сценария",
+            ProjectRequestType.Other => "Другое",
+            _ => type.ToString()
+        };
+
     public static string ExpertConclusionTypeLabel(ExpertConclusionType type) =>
         type switch
         {
             ExpertConclusionType.NotSet => "Не выбрано",
             ExpertConclusionType.Accept => "Принять",
             ExpertConclusionType.AcceptWithLimitations => "Принять с ограничениями",
-            ExpertConclusionType.SendForClarification => "Отправить на уточнение",
-            ExpertConclusionType.SplitIntoSeveralTasks => "Разделить на несколько задач",
+            ExpertConclusionType.SendForClarification => "Требуется уточнение",
+            ExpertConclusionType.SplitIntoSeveralTasks => "Рекомендовать разделение на несколько задач",
             ExpertConclusionType.Reject => "Отклонить",
-            ExpertConclusionType.ReturnForReanalysis => "Вернуть на повторный анализ",
+            ExpertConclusionType.ReturnForReanalysis => "Рекомендовать повторный анализ",
             _ => type.ToString()
         };
 

@@ -127,6 +127,7 @@ public sealed class DetailsModel(
             analysis.Id,
             analysis.Title,
             analysis.Status,
+            analysis.ProjectRequestType,
             analysis.OriginalDescription,
             analysis.ProjectRequest,
             analysis.SituationDescription,
@@ -217,6 +218,7 @@ public sealed class DetailsModel(
         Guid Id,
         string Title,
         AnalysisStatus Status,
+        ProjectRequestType ProjectRequestType,
         string OriginalDescription,
         string ProjectRequest,
         string SituationDescription,
@@ -227,7 +229,201 @@ public sealed class DetailsModel(
         bool HasExpertEvaluation,
         ExpertConclusionDetails? ExpertConclusion,
         AiAnalysisResultDetails? AiAnalysisResult,
-        IReadOnlyList<ContextFragmentDetails> ContextFragments);
+        IReadOnlyList<ContextFragmentDetails> ContextFragments)
+    {
+        public IReadOnlyList<DetailsStatusSummaryItem> StatusSummaryItems =>
+            BuildStatusSummaryItems();
+
+        private IReadOnlyList<DetailsStatusSummaryItem> BuildStatusSummaryItems()
+        {
+            var hasPreliminaryImpactMap = AiAnalysisResult?.ImpactMap is not null &&
+                AiAnalysisResult.Status is AiAnalysisResultStatus.Completed or AiAnalysisResultStatus.CompletedWithWarnings;
+
+            return
+            [
+                new(
+                    "input",
+                    "Входные данные",
+                    AnalysisUiText.AnalysisStatusLabel(Status),
+                    $"{AnalysisUiText.ProjectRequestTypeLabel(ProjectRequestType)}; источник: {ChangeSource}.",
+                    "analysis-input",
+                    "text-bg-secondary",
+                    [new("Проверить ввод", "/Analyses/Review", null)]),
+                new(
+                    "manual-context",
+                    "Manual context",
+                    ContextFragments.Count == 0 ? "Не добавлен" : $"Добавлено: {ContextFragments.Count}",
+                    ContextFragments.Count == 0
+                        ? "Пользователь еще не ввел manual context в карточке анализа."
+                        : "Manual context введен пользователем и сохранен отдельно от retrieved context.",
+                    "manual-context",
+                    ContextFragments.Count == 0 ? "text-bg-light text-dark" : "text-bg-info",
+                    []),
+                new(
+                    "retrieved-context",
+                    "Retrieved context",
+                    GetRetrievedContextStatusLabel(),
+                    GetRetrievedContextDescription(),
+                    "retrieved-context",
+                    GetRetrievedContextBadgeCssClass(),
+                    []),
+                new(
+                    "preliminary-result",
+                    "Предварительный результат",
+                    AiAnalysisResult is null
+                        ? "Не сформирован"
+                        : AnalysisUiText.AiResultStatusLabel(AiAnalysisResult.Status),
+                    AiAnalysisResult is null
+                        ? "Сохраненного AI/RAG/LLM результата пока нет."
+                        : "Сохраненный предварительный материал доступен для экспертного рассмотрения.",
+                    "preliminary-result",
+                    AiAnalysisResult is null ? "text-bg-light text-dark" : "text-bg-secondary",
+                    []),
+                new(
+                    "grounds-limitations",
+                    "Основания и ограничения",
+                    GetGroundsStatusLabel(),
+                    GetGroundsDescription(),
+                    "grounds-limitations",
+                    AiAnalysisResult?.Metadata.Warnings.Count > 0 ? "text-bg-warning" : "text-bg-secondary",
+                    []),
+                new(
+                    "expert-evaluation",
+                    "Экспертная оценка",
+                    HasExpertEvaluation
+                        ? "Зафиксирована"
+                        : hasPreliminaryImpactMap ? "Доступна" : "Недоступна",
+                    HasExpertEvaluation
+                        ? "Экспертная оценка сохранена как человеческий слой проверки."
+                        : hasPreliminaryImpactMap
+                            ? "Можно открыть существующую страницу экспертной оценки."
+                            : "Нужен сохраненный предварительный результат со структурированной картой влияния.",
+                    "expert-evaluation",
+                    HasExpertEvaluation ? "text-bg-success" : "text-bg-light text-dark",
+                    hasPreliminaryImpactMap ? [new("Открыть оценку", "/Analyses/ExpertEvaluation", null)] : []),
+                new(
+                    "expert-conclusion",
+                    "Экспертное заключение",
+                    ExpertConclusion is null ? "Не зафиксировано" : "Зафиксировано",
+                    ExpertConclusion is null
+                        ? "Итоговое заключение эксперта-человека пока не сохранено."
+                        : $"{AnalysisUiText.ExpertConclusionTypeLabel(ExpertConclusion.ConclusionType)}; зафиксировано человеком.",
+                    "expert-conclusion",
+                    ExpertConclusion is null ? "text-bg-light text-dark" : "text-bg-success",
+                    HasExpertEvaluation ? [new("Открыть заключение", "/Analyses/ExpertConclusion", null)] : []),
+                new(
+                    "export",
+                    "Экспорт",
+                    ExpertConclusion is null ? "Недоступен" : "Доступен",
+                    ExpertConclusion is null
+                        ? "Markdown/JSON выгрузка доступна после сохраненного экспертного заключения."
+                        : "Можно скачать сохраненный артефакт без повторного анализа.",
+                    "export",
+                    ExpertConclusion is null ? "text-bg-light text-dark" : "text-bg-secondary",
+                    ExpertConclusion is null
+                        ? []
+                        :
+                        [
+                            new("Скачать JSON", null, "ExportJson"),
+                            new("Скачать Markdown", null, "ExportMarkdown")
+                        ])
+            ];
+        }
+
+        private string GetGroundsStatusLabel()
+        {
+            if (AiAnalysisResult is null)
+            {
+                return "Нет результата";
+            }
+
+            if (AiAnalysisResult.Metadata.Warnings.Count > 0)
+            {
+                return $"Предупреждения: {AiAnalysisResult.Metadata.Warnings.Count}";
+            }
+
+            return AnalysisUiText.RetrievedContextStateLabel(AiAnalysisResult.Metadata.RetrievedContextState);
+        }
+
+        private string GetGroundsDescription()
+        {
+            if (AiAnalysisResult is null)
+            {
+                return "Метаданные, warnings и limitation notes появятся после сохраненного результата.";
+            }
+
+            return
+                $"{AnalysisUiText.AnalysisModeLabel(AiAnalysisResult.Metadata.AnalysisMode)}; " +
+                AnalysisUiText.RetrievedContextStateDescription(AiAnalysisResult.Metadata.RetrievedContextState);
+        }
+
+        private string GetRetrievedContextStatusLabel()
+        {
+            if (AiAnalysisResult is null)
+            {
+                return "Нет результата";
+            }
+
+            if (AiAnalysisResult.Metadata.IsDirectLlmWithoutRetrievedContext)
+            {
+                return "Не создается";
+            }
+
+            return AnalysisUiText.RetrievedContextStateLabel(AiAnalysisResult.Metadata.RetrievedContextState);
+        }
+
+        private string GetRetrievedContextDescription()
+        {
+            if (AiAnalysisResult is null)
+            {
+                return "Retrieved context появится только если внешний provider вернет его для конкретного анализа.";
+            }
+
+            if (AiAnalysisResult.Metadata.IsDirectLlmWithoutRetrievedContext)
+            {
+                return "Direct LLM не создает искусственный retrieved context.";
+            }
+
+            if (!AiAnalysisResult.Metadata.HasRetrievedContextItems)
+            {
+                return "Сохраненных фрагментов или metadata retrieved context для этого результата нет.";
+            }
+
+            return
+                $"Сохраненные фрагменты/metadata, возвращенные внешним provider-ом: {AiAnalysisResult.Metadata.RetrievedContextItems.Count}.";
+        }
+
+        private string GetRetrievedContextBadgeCssClass()
+        {
+            if (AiAnalysisResult is null || AiAnalysisResult.Metadata.IsDirectLlmWithoutRetrievedContext)
+            {
+                return "text-bg-light text-dark";
+            }
+
+            if (AiAnalysisResult.Metadata.RetrievedContextState == RetrievedContextState.Unavailable)
+            {
+                return "text-bg-warning";
+            }
+
+            return AiAnalysisResult.Metadata.HasRetrievedContextItems
+                ? "text-bg-secondary"
+                : "text-bg-light text-dark";
+        }
+    }
+
+    public sealed record DetailsStatusSummaryItem(
+        string Key,
+        string Title,
+        string StatusLabel,
+        string Description,
+        string Anchor,
+        string BadgeCssClass,
+        IReadOnlyList<DetailsStatusSummaryAction> Actions);
+
+    public sealed record DetailsStatusSummaryAction(
+        string Label,
+        string? PageName,
+        string? HandlerName);
 
     public sealed record ExpertConclusionDetails(
         ExpertConclusionType ConclusionType,
@@ -246,24 +442,149 @@ public sealed class DetailsModel(
         AiAnalysisResultMetadataDetails Metadata)
     {
         public IReadOnlyList<ImpactMapSectionDetails> ImpactSections =>
+            ImpactSectionGroups
+                .SelectMany(group => group.Sections)
+                .ToList();
+
+        public IReadOnlyList<ImpactMapSectionGroupDetails> ImpactSectionGroups =>
             ImpactMap is null
                 ? []
                 :
                 [
-                    new("Сводка изменения", [ImpactMap.ChangeSummary]),
-                    new("Затронутые требования", ImpactMap.AffectedRequirements),
-                    new("Затронутые задачи", ImpactMap.AffectedTasks),
-                    new("Затронутые проектные решения", ImpactMap.AffectedProjectDecisions),
-                    new("Затронутые API, интерфейсы, документы и тесты", ImpactMap.AffectedApiInterfacesDocumentsTests),
-                    new("Затронутые архитектурные ограничения", ImpactMap.AffectedArchitecturalConstraints),
-                    new("Затронутый организационный контекст", ImpactMap.AffectedOrganizationalContextItems),
-                    new("Противоречия", ImpactMap.Contradictions),
-                    new("Недостающая информация", ImpactMap.MissingInformation),
-                    new("Вопросы для уточнения", ImpactMap.ClarificationQuestions),
-                    new("Риски", ImpactMap.Risks),
-                    new("Варианты для экспертного рассмотрения", ImpactMap.OptionsForExpertReview),
-                    new("Предварительная оценка", [ImpactMap.PreliminaryAssessment])
+                    new(
+                        "impact-map-orientation",
+                        "Ориентиры анализа",
+                        "Сводные элементы помогают быстро понять предмет изменения и предварительную оценку.",
+                        [
+                            CreateImpactSection(
+                                ImpactMapItemType.ChangeSummary,
+                                "Сводка изменения",
+                                "Краткое описание рассматриваемого изменения.",
+                                "Сводка изменения не заполнена в сохраненной карте влияния.",
+                                [ImpactMap.ChangeSummary]),
+                            CreateImpactSection(
+                                ImpactMapItemType.PreliminaryAssessment,
+                                "Предварительная оценка",
+                                "Предварительная оценка для дальнейшего экспертного рассмотрения.",
+                                "Предварительная оценка не заполнена в сохраненной карте влияния.",
+                                [ImpactMap.PreliminaryAssessment])
+                        ]),
+                    new(
+                        "impact-map-affected-elements",
+                        "Затронутые элементы",
+                        "Требования, задачи, решения, API, ограничения и организационный контекст, которые стоит проверить.",
+                        [
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedRequirement,
+                                "Требования",
+                                "Требования, которые могут потребовать изменения или проверки.",
+                                "Затронутые требования не указаны в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedRequirements),
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedTask,
+                                "Задачи",
+                                "Задачи и работы, которые могут измениться из-за запроса.",
+                                "Затронутые задачи не указаны в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedTasks),
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedProjectDecision,
+                                "Проектные решения",
+                                "Ранее принятые решения, которые стоит сверить с изменением.",
+                                "Затронутые проектные решения не указаны в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedProjectDecisions),
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedApiInterfaceDocumentTest,
+                                "API, интерфейсы, документы и тесты",
+                                "Артефакты реализации и проверки, которые могут потребовать обновления.",
+                                "Затронутые API, интерфейсы, документы и тесты не указаны в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedApiInterfacesDocumentsTests),
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedArchitecturalConstraint,
+                                "Архитектурные ограничения",
+                                "Архитектурные ограничения, которые могут сузить или изменить варианты реализации.",
+                                "Затронутые архитектурные ограничения не указаны в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedArchitecturalConstraints),
+                            CreateImpactSection(
+                                ImpactMapItemType.AffectedOrganizationalContextItem,
+                                "Организационный контекст",
+                                "Роли, процессы или организационные условия, которые стоит учесть.",
+                                "Затронутый организационный контекст не указан в предварительной карте; это не подтверждает отсутствие влияния.",
+                                ImpactMap.AffectedOrganizationalContextItems)
+                        ]),
+                    new(
+                        "impact-map-risks-questions",
+                        "Риски, вопросы и ограничения",
+                        "Неопределенности, противоречия, риски и варианты, которые требуют человеческого рассмотрения.",
+                        [
+                            CreateImpactSection(
+                                ImpactMapItemType.Contradiction,
+                                "Противоречия",
+                                "Потенциальные конфликты с требованиями, решениями или ограничениями.",
+                                "Противоречия не указаны в предварительной карте; это не подтверждает их отсутствие.",
+                                ImpactMap.Contradictions),
+                            CreateImpactSection(
+                                ImpactMapItemType.MissingInformation,
+                                "Недостающая информация",
+                                "Данные, которых не хватает для уверенного анализа.",
+                                "Недостающая информация не указана в предварительной карте; это не подтверждает полноту контекста.",
+                                ImpactMap.MissingInformation),
+                            CreateImpactSection(
+                                ImpactMapItemType.ClarificationQuestion,
+                                "Вопросы для уточнения",
+                                "Вопросы, которые нужно адресовать до управленческого рассмотрения.",
+                                "Вопросы для уточнения не указаны в предварительной карте; это не подтверждает, что уточнения не нужны.",
+                                ImpactMap.ClarificationQuestions),
+                            CreateImpactSection(
+                                ImpactMapItemType.Risk,
+                                "Риски",
+                                "Риски, которые стоит проверить и оценить эксперту.",
+                                "Риски не указаны в предварительной карте; это не подтверждает их отсутствие.",
+                                ImpactMap.Risks),
+                            CreateImpactSection(
+                                ImpactMapItemType.OptionForExpertReview,
+                                "Варианты для экспертного рассмотрения",
+                                "Возможные варианты дальнейшего рассмотрения человеком.",
+                                "Варианты для экспертного рассмотрения не указаны в предварительной карте; эксперт может сформулировать их отдельно.",
+                                ImpactMap.OptionsForExpertReview)
+                        ])
                 ];
+
+        public IReadOnlyList<ImpactMapSummaryDetails> ImpactMapSummaryCards =>
+            ImpactSectionGroups
+                .Select(group => new ImpactMapSummaryDetails(
+                    group.Title,
+                    FormatItemCount(group.ItemCount),
+                    group.Summary))
+                .ToList();
+
+        private static ImpactMapSectionDetails CreateImpactSection(
+            ImpactMapItemType itemType,
+            string title,
+            string summary,
+            string emptyState,
+            IReadOnlyList<ImpactMapItem> items) =>
+            new(
+                $"impact-map-section-{ImpactMapIds.GetSectionId(itemType)}",
+                title,
+                summary,
+                emptyState,
+                items,
+                FormatItemCount(items.Count));
+
+        private static string FormatItemCount(int count)
+        {
+            if (count % 100 is >= 11 and <= 14)
+            {
+                return $"{count} элементов";
+            }
+
+            return (count % 10) switch
+            {
+                1 => $"{count} элемент",
+                >= 2 and <= 4 => $"{count} элемента",
+                _ => $"{count} элементов"
+            };
+        }
     }
 
     public sealed record AiAnalysisResultMetadataDetails(
@@ -275,7 +596,14 @@ public sealed class DetailsModel(
         RetrievedContextState RetrievedContextState,
         bool ManualContextForwardedToExternalAiOrRag,
         IReadOnlyList<string> Warnings,
-        IReadOnlyList<RetrievedContextItemDetails> RetrievedContextItems);
+        IReadOnlyList<RetrievedContextItemDetails> RetrievedContextItems)
+    {
+        public bool HasRetrievedContextItems => RetrievedContextItems.Count > 0;
+
+        public bool IsDirectLlmWithoutRetrievedContext =>
+            AnalysisMode == RequirementImpactAssistant.Web.Domain.Enums.AnalysisMode.DirectLlm &&
+            !HasRetrievedContextItems;
+    }
 
     public sealed record RetrievedContextItemDetails(
         string SourceTitle,
@@ -290,9 +618,27 @@ public sealed class DetailsModel(
         RetrievedContextItemCompleteness Completeness,
         string? WarningOrLimitationNote);
 
-    public sealed record ImpactMapSectionDetails(
+    public sealed record ImpactMapSectionGroupDetails(
+        string Anchor,
         string Title,
-        IReadOnlyList<ImpactMapItem> Items);
+        string Summary,
+        IReadOnlyList<ImpactMapSectionDetails> Sections)
+    {
+        public int ItemCount => Sections.Sum(section => section.Items.Count);
+    }
+
+    public sealed record ImpactMapSummaryDetails(
+        string Title,
+        string CountLabel,
+        string Description);
+
+    public sealed record ImpactMapSectionDetails(
+        string Anchor,
+        string Title,
+        string Summary,
+        string EmptyState,
+        IReadOnlyList<ImpactMapItem> Items,
+        string CountLabel);
 
     public sealed record ContextFragmentDetails(
         Guid Id,
